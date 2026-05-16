@@ -20,6 +20,7 @@ from core.reporter import save_html_report, save_pdf_report
 from core.scanner import ScanBundle, run_parallel_scans
 from core.searchsploit_client import lookup_technologies
 from core.shodan_client import run_shodan_recon
+from core.virustotal_client import run_virustotal_recon
 from core.utils import merge_unique_cves
 from core.swarm.orchestrator import MARSSwarmManager
 
@@ -120,8 +121,15 @@ async def _run_audit_async(target: str) -> dict[str, Any]:
     else:
         print(f"    [-] Shodan: {shodan_res.get('error')}")
 
+    print("[*] Пассивный OSINT (VirusTotal)...")
+    vt_res = run_virustotal_recon(target, api_key=curr_settings.virustotal_api_key)
+    if vt_res.get("success"):
+        print(f"    [+] VirusTotal: {vt_res.get('malicious', 0)} антивирусов пометили цель")
+    else:
+        print(f"    [-] VirusTotal: {vt_res.get('error')}")
+
     osint_data = f"SHODAN: {json.dumps(shodan_res, ensure_ascii=False)}\n\n"
-    # Добавим поддомены из Subfinder к osint_data
+    osint_data += f"VIRUSTOTAL: {json.dumps(vt_res, ensure_ascii=False)}\n\n"
     subfinder_res = next((r for r in bundle.results if r.tool == "subfinder"), None)
     if subfinder_res and subfinder_res.success:
         osint_data += f"SUBFINDER:\n{subfinder_res.stdout}\n"

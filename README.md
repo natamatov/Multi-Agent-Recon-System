@@ -37,7 +37,10 @@
 - Интеграция с **NVD API 2.0** для получения точного CVSS Score и описаний CVE.
 - Интеграция с **SearchSploit (Exploit-DB)** для поиска PoC.
 - Пассивный OSINT через **Shodan API** (не касается цели напрямую).
+- **VirusTotal API v3**: проверка репутации домена/IP по 90+ антивирусным движкам.
 - Специализированное сканирование **WordPress** через **WPScan** (плагины, темы, пользователи).
+- **Nikto**: активное сканирование веб-сервера на опасные настройки и устаревшее ПО.
+- **ffuf**: быстрый web fuzzer для обнаружения скрытых директорий и параметров.
 
 📊 **UI и Отчетность**
 - Удобный веб-интерфейс на базе **Streamlit**.
@@ -56,8 +59,9 @@ Multi-Agent-Recon-System
 └── core/                      # Ядро бизнес-логики
     ├── config.py              # Загрузка и валидация .env
     ├── dependency_manager.py  # Проверка системных утилит (Kali)
-    ├── scanner.py             # Асинхронный запуск Nmap, WhatWeb, Subfinder, Nuclei, WPScan
+    ├── scanner.py             # Асинхронный запуск Nmap, WhatWeb, Subfinder, Nuclei, WPScan, Nikto, ffuf
     ├── shodan_client.py       # Клиент Shodan API
+    ├── virustotal_client.py   # Клиент VirusTotal API v3
     ├── nvd_client.py          # Клиент NIST NVD API
     ├── searchsploit_client.py # Интеграция с Exploit-DB
     ├── reporter.py            # Генерация HTML и PDF отчетов
@@ -77,7 +81,7 @@ Multi-Agent-Recon-System
 
 ```bash
 sudo apt update
-sudo apt install -y nmap whatweb dirb exploitdb subfinder wkhtmltopdf wpscan
+sudo apt install -y nmap whatweb dirb exploitdb subfinder wkhtmltopdf wpscan nikto ffuf
 ```
 
 Установка [Nuclei](https://github.com/projectdiscovery/nuclei):
@@ -116,6 +120,7 @@ cp .env.example .env
 | `NVD_API_KEY` | Нет | Ключ NIST (повышает лимиты API и скорость обогащения CVE). |
 | `SHODAN_API_KEY` | Нет | Включает пассивный OSINT перед сканированием. |
 | `WPSCAN_API_KEY` | Нет | Включает поиск CVE в плагинах/темах WordPress (25 req/day бесплатно на wpscan.com). |
+| `VIRUSTOTAL_API_KEY` | Нет | Проверка репутации цели по 90+ антивирусным движкам (virustotal.com, free tier). |
 
 ---
 

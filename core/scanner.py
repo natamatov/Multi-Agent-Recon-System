@@ -180,33 +180,55 @@ async def run_subfinder_async(target: str, timeout: int = 300) -> ScanResult:
 async def run_wpscan_async(target: str, api_key: str | None = None, timeout: int = 600) -> ScanResult:
     """WPScan: сканирование WordPress. Завершится быстро, если это не WP."""
     url = build_url(target)
-    # -e vp,vt,u (vulnerable plugins, vulnerable themes, users)
     command = ["wpscan", "--url", url, "-e", "vp,vt,u", "--batch"]
     if api_key:
         command.extend(["--api-token", api_key])
     return await _run_command_async("wpscan", command, timeout=timeout)
 
 
+async def run_nikto_async(target: str, timeout: int = 600) -> ScanResult:
+    """Nikto: активное сканирование веб-сервера (устаревшее ПО, опасные файлы, настройки)."""
+    url = build_url(target)
+    command = ["nikto", "-h", url, "-nointeractive", "-Format", "txt"]
+    return await _run_command_async("nikto", command, timeout=timeout)
+
+
+async def run_ffuf_async(target: str, timeout: int = 300) -> ScanResult:
+    """ffuf: быстрый fuzzing директорий и файлов (альтернатива dirb)."""
+    url = build_url(target)
+    wordlist = "/usr/share/seclists/Discovery/Web-Content/common.txt"
+    # fallback на dirb wordlist если seclists не установлены
+    import os
+    if not os.path.exists(wordlist):
+        wordlist = "/usr/share/dirb/wordlists/common.txt"
+    command = ["ffuf", "-u", f"{url}/FUZZ", "-w", wordlist, "-mc", "200,301,302,403", "-t", "50", "-s"]
+    return await _run_command_async("ffuf", command, timeout=timeout)
+
+
 async def run_parallel_scans(target: str, wpscan_api_key: str | None = None) -> ScanBundle:
     """
-    Параллельно запускает nmap, whatweb, nuclei, subfinder и wpscan через asyncio.gather.
-    Dirb выполняется последовательно после (длительный перебор).
+    Параллельно запускает nmap, whatweb, nuclei, subfinder, wpscan, nikto через asyncio.gather.
+    ffuf и dirb выполняются последовательно.
     """
     bundle = ScanBundle(target=target)
 
-    nmap_result, whatweb_result, nuclei_result, subfinder_result, wpscan_result = await asyncio.gather(
+    nmap_r, whatweb_r, nuclei_r, subfinder_r, wpscan_r, nikto_r = await asyncio.gather(
         run_nmap_async(target),
         run_whatweb_async(target),
         run_nuclei_scan_async(target),
         run_subfinder_async(target),
         run_wpscan_async(target, api_key=wpscan_api_key),
+        run_nikto_async(target),
     )
 
-    bundle.results.extend([nmap_result, whatweb_result, subfinder_result, wpscan_result])
-    bundle.nuclei = nuclei_result
+    bundle.results.extend([nmap_r, whatweb_r, subfinder_r, wpscan_r, nikto_r])
+    bundle.nuclei = nuclei_r
 
-    print("[*] Dirb (последовательно)...")
-    dirb_result = await run_dirb_async(target)
-    bundle.results.append(dirb_result)
+    print("[*] ffuf (быстрый fuzzing, параллельно с dirb)...")
+    ffuf_result, dirb_result = await asyncio.gather(
+        run_ffuf_async(target),
+        run_dirb_async(target),
+    )
+    bundle.results.extend([ffuf_result, dirb_result])
 
     return bundle

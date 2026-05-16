@@ -22,6 +22,7 @@ from core.dependency_manager import (
 )
 from core.scanner import run_parallel_scans
 from core.shodan_client import run_shodan_recon
+from core.virustotal_client import run_virustotal_recon
 from core.swarm.orchestrator import MARSSwarmManager
 
 
@@ -97,19 +98,29 @@ def _run_audit(target: str) -> None:
         st.session_state.raw_logs = logs
         st.write("✅ Сканирование завершено.")
 
-        st.write("🤖 **Шаг 2/3:** Пассивный OSINT (Shodan)...")
+        st.write("🤖 **Шаг 2/4:** Пассивный OSINT (Shodan + VirusTotal)...")
         shodan_res = run_shodan_recon(target, api_key=st.session_state.get("shodan_api_key"))
+        vt_res = run_virustotal_recon(target, api_key=st.session_state.get("virustotal_api_key"))
+
         if shodan_res.get("success"):
             st.write(f"✅ Shodan нашел {len(shodan_res.get('open_ports', []))} портов")
         else:
             st.write(f"⚠️ Shodan: {shodan_res.get('error')}")
 
-        osint_data = f"SHODAN: {json.dumps(shodan_res, ensure_ascii=False)}\n\n"
+        if vt_res.get("success"):
+            malicious = vt_res.get("malicious", 0)
+            st.write(f"✅ VirusTotal: {malicious} антивирусов пометили цель как вредоносную" if malicious else "✅ VirusTotal: цель не числится вредоносной")
+        else:
+            st.write(f"⚠️ VirusTotal: {vt_res.get('error')}")
+
+        import json as _json
+        osint_data = f"SHODAN: {_json.dumps(shodan_res, ensure_ascii=False)}\n\n"
+        osint_data += f"VIRUSTOTAL: {_json.dumps(vt_res, ensure_ascii=False)}\n\n"
         subfinder_res = next((r for r in bundle.results if r.tool == "subfinder"), None)
         if subfinder_res and subfinder_res.success:
             osint_data += f"SUBFINDER:\n{subfinder_res.stdout}\n"
 
-        st.write("🤖 **Шаг 3/3:** Запуск мультиагентного роя (CrewAI)...")
+        st.write("🤖 **Шаг 4/4:** Запуск мультиагентного роя (CrewAI)...")
         
         def step_callback(step_info):
             st.write(f"⚙️ Рой агентов выполняет шаг: {getattr(step_info, 'name', 'анализ')}")
@@ -154,6 +165,8 @@ def main() -> None:
     # Store settings in session for run_audit
     st.session_state.shodan_api_key = settings.shodan_api_key
     st.session_state.wpscan_api_key = settings.wpscan_api_key
+    st.session_state.virustotal_api_key = settings.virustotal_api_key
+
 
     st.divider()
 

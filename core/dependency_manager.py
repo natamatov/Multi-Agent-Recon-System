@@ -9,7 +9,7 @@ import shutil
 from typing import Iterable
 
 # Утилиты пайплайна (включая nuclei, searchsploit, wkhtmltopdf, subfinder, wpscan)
-DEFAULT_REQUIRED_TOOLS: tuple[str, ...] = ("nmap", "whatweb", "dirb", "nuclei", "searchsploit", "wkhtmltopdf", "subfinder", "wpscan")
+DEFAULT_REQUIRED_TOOLS: tuple[str, ...] = ("nmap", "whatweb", "dirb", "nuclei", "searchsploit", "wkhtmltopdf", "subfinder", "wpscan", "nikto", "ffuf")
 
 # Подсказки для apt в Kali/Debian
 _APT_PACKAGES: dict[str, str] = {
@@ -21,6 +21,8 @@ _APT_PACKAGES: dict[str, str] = {
     "wkhtmltopdf": "wkhtmltopdf",
     "subfinder": "subfinder",
     "wpscan": "wpscan",
+    "nikto": "nikto",
+    "ffuf": "ffuf",
 }
 
 def is_tool_available(tool_name: str) -> bool:
