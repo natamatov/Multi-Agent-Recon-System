@@ -287,3 +287,28 @@ def save_html_report(report: dict[str, Any], path: str = "audit_report.html") ->
     out.write_text(content, encoding="utf-8")
     print(f"[OK] HTML-отчёт: {out}")
     return out
+
+def save_pdf_report(report: dict[str, Any], path: str = "audit_report.pdf") -> Path:
+    """Конвертирует HTML-отчет в PDF и сохраняет на диск."""
+    import pdfkit
+    
+    html_content = generate_html_report(report)
+    
+    options = {
+        'page-size': 'A4',
+        'margin-top': '0.75in',
+        'margin-right': '0.75in',
+        'margin-bottom': '0.75in',
+        'margin-left': '0.75in',
+        'encoding': "UTF-8",
+        'no-outline': None
+    }
+    
+    out = Path(path)
+    try:
+        pdfkit.from_string(html_content, str(out), options=options)
+        print(f"[OK] PDF-отчёт: {out}")
+    except Exception as e:
+        print(f"[ERROR] Не удалось создать PDF (убедитесь, что wkhtmltopdf установлен): {e}")
+    
+    return out

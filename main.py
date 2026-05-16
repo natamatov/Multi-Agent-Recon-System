@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Оркестратор enterprise-аудита: параллельные сканеры, NVD, SearchSploit, Claude, HTML.
+Оркестратор enterprise-аудита: параллельные сканеры, NVD, SearchSploit, Swarm AI (CrewAI), HTML/PDF.
 """
 
 from __future__ import annotations
@@ -13,65 +13,23 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from ai_analyzer import SecurityAuditAnalyzer, save_report
-from config import Settings, load_settings
-from dependency_manager import ensure_tools_available
-from nvd_client import enrich_cves_from_text
-from reporter import save_html_report
-from scanner import ScanBundle, run_parallel_scans
-from searchsploit_client import lookup_technologies
-from utils import merge_unique_cves
-
+from core.config import load_settings, validate_target_string
+from core.dependency_manager import ensure_tools_available
+from core.nvd_client import enrich_cves_from_text
+from core.reporter import save_html_report, save_pdf_report
+from core.scanner import ScanBundle, run_parallel_scans
+from core.searchsploit_client import lookup_technologies
+from core.utils import merge_unique_cves
+from core.swarm.orchestrator import MARSSwarmManager
 
 REPORT_JSON = "audit_report.json"
 REPORT_HTML = "audit_report.html"
-
-
-def _merge_nvd_into_cves(
-    ai_cves: list[dict[str, Any]],
-    nvd_records: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    """
-    Объединяет CVE от Claude с верифицированными данными NVD (CVSS, описание).
-    """
-    nvd_map = {r["id"].upper(): r for r in nvd_records if r.get("id")}
-    merged: list[dict[str, Any]] = []
-    seen: set[str] = set()
-
-    for cve in ai_cves:
-        cid = str(cve.get("id", "")).upper()
-        if not cid:
-            continue
-        seen.add(cid)
-        row = dict(cve)
-        if cid in nvd_map:
-            nvd = nvd_map[cid]
-            row["nvd_verified"] = nvd.get("verified", False)
-            row["cvss_score"] = row.get("cvss_score") or nvd.get("cvss_score")
-            row["severity"] = row.get("severity") or nvd.get("severity")
-            if not row.get("description"):
-                row["description"] = nvd.get("description", "")
-        merged.append(row)
-
-    for cid, nvd in nvd_map.items():
-        if cid not in seen:
-            merged.append({
-                "id": cid,
-                "severity": nvd.get("severity", "unknown"),
-                "cvss_score": nvd.get("cvss_score"),
-                "description": nvd.get("description", ""),
-                "affected_component": "",
-                "nvd_verified": nvd.get("verified", False),
-                "source": "NVD-only",
-            })
-
-    return merged
-
+REPORT_PDF = "audit_report.pdf"
 
 def build_final_report(
-    settings: Settings,
+    target: str,
     bundle: ScanBundle,
-    analysis: dict[str, Any],
+    swarm_results: dict[str, Any],
     *,
     nvd_records: list[dict[str, Any]],
     searchsploit_results: list[dict[str, Any]],
@@ -80,8 +38,6 @@ def build_final_report(
     nuclei_findings: list[dict[str, Any]] = []
     if bundle.nuclei:
         nuclei_findings = [f.to_dict() for f in bundle.nuclei.findings]
-
-    cves = _merge_nvd_into_cves(analysis.get("cves", []), nvd_records)
 
     scan_summary: dict[str, Any] = {
         r.tool: {"success": r.success, "error": r.error_message}
@@ -96,28 +52,28 @@ def build_final_report(
 
     return {
         "audit": {
-            "target": settings.target,
+            "target": target,
             "timestamp_utc": datetime.now(timezone.utc).isoformat(),
             "platform": "Kali Linux / PentestPlatform Enterprise",
         },
         "scan_summary": scan_summary,
-        "technologies": analysis.get("technologies", []),
-        "cves": cves,
         "nuclei_findings": nuclei_findings,
-        "nuclei_correlations": analysis.get("nuclei_correlations", []),
-        "developer_instructions": analysis.get("developer_instructions", []),
-        "ai_summary": analysis.get("summary", ""),
         "nvd_enrichment": nvd_records,
         "searchsploit": searchsploit_results,
         "raw_scan_logs": bundle.to_log_text(),
-        "metadata": analysis.get("metadata", {}),
+        "ai_summary": swarm_results.get("final_summary", ""),
+        "parsed_data": swarm_results.get("parsed_data", ""),
+        "cve_data": swarm_results.get("cve_data", ""),
+        "sigma_playbook": swarm_results.get("sigma_playbook", ""),
+        "success": swarm_results.get("success", False),
+        "error": swarm_results.get("error", "")
     }
 
 
-async def _run_audit_async(settings: Settings) -> dict[str, Any]:
+async def _run_audit_async(target: str) -> dict[str, Any]:
     """Асинхронная фаза сканирования и обогащения."""
     print("[*] Параллельный запуск: nmap, whatweb, nuclei...")
-    bundle = await run_parallel_scans(settings.target)
+    bundle = await run_parallel_scans(target)
 
     for result in bundle.results:
         status = "OK" if result.success else "WARN"
@@ -146,32 +102,27 @@ async def _run_audit_async(settings: Settings) -> dict[str, Any]:
     searchsploit_results = lookup_technologies(pre_tech) if pre_tech else []
     if not searchsploit_results:
         searchsploit_results = lookup_technologies(
-            [{"name": settings.target, "version": ""}],
+            [{"name": target, "version": ""}],
             max_queries=1,
         )
     print(f"    [+] SearchSploit: {len(searchsploit_results)} запросов")
 
-    aggregated = bundle.to_aggregated_dict()
-    aggregated["nvd_enrichment"] = nvd_records
-    aggregated["searchsploit"] = searchsploit_results
-    aggregated["cve_inventory"] = merge_unique_cves(
-        [r["id"] for r in nvd_records if r.get("id")],
-        bundle.nuclei.all_cve_ids() if bundle.nuclei else [],
-    )
-
-    print("[*] AI-анализ (Claude)...")
-    analyzer = SecurityAuditAnalyzer(api_key=settings.claude_api_key)
-    analysis = analyzer.analyze(aggregated)
-
-    # SearchSploit по технологиям от Claude
-    print("[*] SearchSploit по технологиям от AI...")
-    ai_searchsploit = lookup_technologies(analysis.get("technologies", []))
-    searchsploit_results.extend(ai_searchsploit)
+    print("[*] Запуск AI Swarm (CrewAI)...")
+    def step_callback(step):
+        print("  [AI Agent]: Выполняется шаг анализа...")
+        
+    manager = MARSSwarmManager(step_callback=step_callback)
+    swarm_results = manager.run_analysis(logs)
+    
+    if swarm_results.get("success"):
+        print("[+] Swarm анализ успешно завершён.")
+    else:
+        print(f"[-] Ошибка Swarm: {swarm_results.get('error')}")
 
     return build_final_report(
-        settings,
+        target,
         bundle,
-        analysis,
+        swarm_results,
         nvd_records=nvd_records,
         searchsploit_results=searchsploit_results,
     )
@@ -180,37 +131,47 @@ async def _run_audit_async(settings: Settings) -> dict[str, Any]:
 def main() -> None:
     """Точка входа."""
     print("=" * 60)
-    print("  PentestPlatform — Enterprise Security Audit")
+    print("  PentestPlatform — Enterprise Security Audit (Swarm Edition)")
     print("=" * 60)
 
     settings = load_settings()
-    print(f"[+] Цель: {settings.target}")
+    target = settings.target
+    if not target:
+        raw_target = input("Введите TARGET (IP, домен или URL): ").strip()
+        try:
+            target = validate_target_string(raw_target)
+        except ValueError as e:
+            print(f"[ОШИБКА] {e}")
+            sys.exit(1)
+            
+    print(f"[+] Цель: {target}")
 
-    print("[*] Проверка утилит (nmap, whatweb, dirb, nuclei, searchsploit)...")
+    print("[*] Проверка утилит (nmap, whatweb, dirb, nuclei, searchsploit, wkhtmltopdf)...")
     tools = ensure_tools_available()
     print(f"[+] Доступны: {', '.join(tools)}")
 
     try:
-        final_report = asyncio.run(_run_audit_async(settings))
+        final_report = asyncio.run(_run_audit_async(target))
     except RuntimeError as exc:
         print(f"[ОШИБКА] {exc}", file=sys.stderr)
         sys.exit(1)
 
     base = Path(__file__).resolve().parent
-    save_report(final_report, str(base / REPORT_JSON))
+    
+    # Save JSON
+    json_path = base / REPORT_JSON
+    json_path.write_text(json.dumps(final_report, ensure_ascii=False, indent=2), encoding="utf-8")
+    
+    # Save HTML
     save_html_report(final_report, str(base / REPORT_HTML))
+    
+    # Save PDF
+    save_pdf_report(final_report, str(base / REPORT_PDF))
 
-    tech_count = len(final_report.get("technologies", []))
-    cve_count = len(final_report.get("cves", []))
-    print(f"[+] Технологий: {tech_count} | CVE: {cve_count}")
-    print(json.dumps(
-        {
-            "summary": final_report.get("ai_summary", "")[:200],
-            "cves_sample": final_report.get("cves", [])[:2],
-        },
-        ensure_ascii=False,
-        indent=2,
-    ))
+    print("\n[+] Аудит завершён.")
+    print("=" * 60)
+    if final_report.get("success"):
+        print(final_report.get("ai_summary", "")[:500] + "...")
 
 
 if __name__ == "__main__":

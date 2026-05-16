@@ -1,26 +1,27 @@
 #!/usr/bin/env python3
 """
-MARS SOLUTIONS - Security Assessment Hub
+MARS SOLUTIONS - Security Assessment Hub (Swarm Edition)
 Streamlit UI для легального Vulnerability Assessment (Kali Linux).
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
 import pandas as pd
 import streamlit as st
 
-from core.ai_analyzer import ClaudeAnalyzer
 from core.config import try_load_settings
 from core.dependency_manager import (
-    INSTALL_HINTS,
+    _APT_PACKAGES,
     all_tools_ready,
     check_tools,
     missing_tools,
 )
-from core.scanner import run_all_scanners
+from core.scanner import run_parallel_scans
+from core.swarm.orchestrator import MARSSwarmManager
 
 
 # ——— Конфигурация страницы ———
@@ -45,11 +46,7 @@ def _init_session() -> None:
 
 
 def _render_sidebar() -> bool:
-    """
-    Боковая панель: статус утилит, ошибки, кнопка перепроверки.
-
-    :return: True если все зависимости установлены.
-    """
+    """Боковая панель: статус утилит, ошибки, кнопка перепроверки."""
     st.sidebar.header("Зависимости системы")
     status: dict[str, bool] = st.session_state.tool_status
 
@@ -60,7 +57,8 @@ def _render_sidebar() -> bool:
     missing = missing_tools(status)
     if missing:
         for tool in missing:
-            hint = INSTALL_HINTS.get(tool, f"sudo apt install {tool}")
+            package = _APT_PACKAGES.get(tool, tool)
+            hint = f"sudo apt install {package}"
             st.sidebar.error(
                 f"Утилита `{tool}` не найдена.\n\n"
                 f"Установите: `{hint}`"
@@ -79,120 +77,36 @@ def _render_sidebar() -> bool:
     return True
 
 
-def _severity_style(val: str) -> str:
-    """CSS-фон для колонки severity в таблице CVE."""
-    v = str(val).lower()
-    if v in ("critical", "high"):
-        return "background-color: #fecaca; color: #7f1d1d;"
-    if v in ("medium", "moderate"):
-        return "background-color: #fef08a; color: #713f12;"
-    if v == "low":
-        return "background-color: #bbf7d0; color: #14532d;"
-    return "background-color: #e5e7eb; color: #374151;"
-
-
-def _normalize_technologies(raw: list[Any]) -> list[str]:
-    """Приводит technologies к списку строк для отображения."""
-    result: list[str] = []
-    for item in raw:
-        if isinstance(item, str):
-            result.append(item)
-        elif isinstance(item, dict):
-            name = item.get("name", "")
-            version = item.get("version", "")
-            label = f"{name} {version}".strip() or str(item)
-            result.append(label)
-        else:
-            result.append(str(item))
-    return result
-
-
-def _cves_to_dataframe(cves: list[Any]) -> pd.DataFrame:
-    """Формирует DataFrame для st.dataframe с подсветкой severity."""
-    if not cves:
-        return pd.DataFrame(
-            columns=["id", "severity", "description", "remediation"]
-        )
-
-    rows: list[dict[str, str]] = []
-    for cve in cves:
-        if isinstance(cve, dict):
-            rows.append({
-                "id": str(cve.get("id", "N/A")),
-                "severity": str(cve.get("severity", "Unknown")),
-                "description": str(cve.get("description", "")),
-                "remediation": str(cve.get("remediation", cve.get("fix", ""))),
-            })
-        else:
-            rows.append({
-                "id": str(cve),
-                "severity": "Unknown",
-                "description": "",
-                "remediation": "",
-            })
-    return pd.DataFrame(rows)
-
-
-def _render_ai_tab(analysis: dict[str, Any]) -> None:
-    """Вкладка отчёта AI: технологии и таблица CVE."""
-    technologies = _normalize_technologies(analysis.get("technologies", []))
-    cves = analysis.get("cves", [])
-    summary = analysis.get("summary", "")
-
-    st.subheader("Резюме")
-    st.info(summary or "Резюме не предоставлено.")
-
-    st.subheader("Обнаруженные технологии")
-    if technologies:
-        if hasattr(st, "pills"):
-            st.pills(technologies, selection_mode=None, key="tech_pills")
-        else:
-            st.caption(" · ".join(f"`{t}`" for t in technologies))
-    else:
-        st.caption("Технологии не определены.")
-
-    st.subheader("CVE")
-    df = _cves_to_dataframe(cves)
-    if df.empty:
-        st.caption("Уязвимости CVE не выявлены.")
-    else:
-        styler = df.style
-        if hasattr(styler, "map"):
-            styled = styler.map(_severity_style, subset=["severity"])
-        else:
-            styled = styler.applymap(_severity_style, subset=["severity"])
-        st.dataframe(styled, use_container_width=True, hide_index=True)
-
-
-def _render_raw_tab(nmap_log: str, whatweb_log: str) -> None:
-    """Вкладка сырых логов сканеров."""
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown("#### Nmap")
-        st.code(nmap_log or "(пусто)", language="text")
-    with col2:
-        st.markdown("#### WhatWeb")
-        st.code(whatweb_log or "(пусто)", language="text")
-
-
-def _run_audit(target: str, api_key: str) -> None:
+def _run_audit(target: str) -> None:
     """Выполняет сканирование и AI-анализ внутри st.status."""
     with st.status("Выполнение аудита...", expanded=True) as status:
-        st.write("**Шаг 1/2:** Запуск nmap и whatweb...")
-        nmap_log, whatweb_log = run_all_scanners(target)
-        st.session_state.raw_logs = {"nmap": nmap_log, "whatweb": whatweb_log}
-        st.write("Сканирование завершено.")
-
-        st.write("**Шаг 2/2:** Анализ Claude (маппинг CVE)...")
-        analyzer = ClaudeAnalyzer(api_key=api_key)
+        st.write("🔄 **Шаг 1/2:** Запуск параллельного сканирования (nmap, whatweb, nuclei, dirb)...")
+        
         try:
-            analysis = analyzer.analyze(nmap_log, whatweb_log)
-        except RuntimeError as exc:
-            status.update(label="Ошибка аудита", state="error")
-            st.error(str(exc))
+            bundle = asyncio.run(run_parallel_scans(target))
+        except Exception as e:
+            status.update(label="Ошибка сканирования", state="error")
+            st.error(f"Не удалось выполнить сканирование: {e}")
+            return
+            
+        logs = bundle.to_log_text()
+        st.session_state.raw_logs = logs
+        st.write("✅ Сканирование завершено.")
+
+        st.write("🤖 **Шаг 2/2:** Запуск мультиагентного роя (CrewAI)...")
+        
+        def step_callback(step_info):
+            st.write(f"⚙️ Рой агентов выполняет шаг: {getattr(step_info, 'name', 'анализ')}")
+
+        manager = MARSSwarmManager(step_callback=step_callback)
+        swarm_results = manager.run_analysis(logs)
+
+        if not swarm_results.get("success"):
+            status.update(label="Ошибка AI-анализа", state="error")
+            st.error(swarm_results.get("error"))
             return
 
-        st.session_state.audit_result = analysis
+        st.session_state.audit_result = swarm_results
         status.update(label="Аудит завершён", state="complete")
 
 
@@ -201,7 +115,7 @@ def main() -> None:
 
     st.title(f"🛡️ {APP_TITLE}")
     st.caption(
-        "Легальное сканирование и сопоставление CVE. "
+        "Легальное сканирование и сопоставление CVE с использованием Multi-Agent Swarm. "
         "Используйте только на системах с письменным разрешением."
     )
 
@@ -213,12 +127,11 @@ def main() -> None:
         )
         st.stop()
 
-    # Проверка API-ключа (без TARGET в .env)
     settings = try_load_settings()
     if settings is None:
         st.error(
-            "Не настроен `CLAUDE_API_KEY`. "
-            "Создайте файл `.env` на основе `.env.example`."
+            "Не настроен `CLAUDE_API_KEY` в файле `.env`. "
+            "Ключ Anthropic обязателен для работы роя агентов."
         )
         st.stop()
 
@@ -227,7 +140,6 @@ def main() -> None:
     target = st.text_input(
         "TARGET (IP, домен или URL)",
         placeholder="192.168.1.10 или https://example.com",
-        help="Цель задаётся только через интерфейс, не через .env",
     )
 
     run_clicked = st.button(
@@ -240,23 +152,36 @@ def main() -> None:
         if not target or not target.strip():
             st.warning("Укажите TARGET перед запуском.")
         else:
-            _run_audit(target.strip(), settings.claude_api_key)
+            _run_audit(target.strip())
             st.rerun()
 
-    # Вывод результатов предыдущего аудита
-    if st.session_state.audit_result and st.session_state.raw_logs:
+    # Вывод результатов
+    res = st.session_state.audit_result
+    if res and st.session_state.raw_logs:
         st.divider()
-        tab_ai, tab_raw = st.tabs(["Отчет AI (CVE)", "Сырые логи сканеров"])
+        
+        tab_parsed, tab_cve, tab_sigma, tab_raw = st.tabs([
+            "Нормализованные данные", 
+            "Уязвимости (CVE)", 
+            "Sigma Правила & Playbook", 
+            "Сырые логи сканеров"
+        ])
 
-        with tab_ai:
-            _render_ai_tab(st.session_state.audit_result)
+        with tab_parsed:
+            st.subheader("Извлеченные данные (Parser Agent)")
+            st.markdown(res.get("parsed_data", "Данные отсутствуют."))
+
+        with tab_cve:
+            st.subheader("Обогащение и CVE (Threat Intel Agent)")
+            st.markdown(res.get("cve_data", "Уязвимости не найдены."))
+
+        with tab_sigma:
+            st.subheader("Защитный Playbook (SOC Engineer Agent)")
+            st.markdown(res.get("sigma_playbook", "План защиты не сгенерирован."))
 
         with tab_raw:
-            logs = st.session_state.raw_logs
-            _render_raw_tab(logs.get("nmap", ""), logs.get("whatweb", ""))
-
-        with st.expander("JSON-ответ AI (отладка)"):
-            st.json(st.session_state.audit_result)
+            st.markdown("#### Комбинированный лог сканирования")
+            st.code(st.session_state.raw_logs, language="text")
 
 
 if __name__ == "__main__":

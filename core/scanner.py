@@ -1,166 +1,195 @@
 """
-Запуск nmap и whatweb через subprocess (только сбор данных, без эксплуатации).
+Модуль сбора данных: безопасный запуск утилит сканирования.
+Параллельный запуск nmap, whatweb и nuclei через asyncio.
 """
 
 from __future__ import annotations
 
-import subprocess
-from dataclasses import dataclass
-from typing import Sequence
-from urllib.parse import urlparse
+import asyncio
+from dataclasses import dataclass, field
+from typing import Any, Sequence
+
+from nuclei_worker import NucleiScanResult, run_nuclei_scan_async
+from utils import build_url, extract_host
 
 
 @dataclass
-class ScanOutput:
-    """Результат одного сканера."""
+class ScanResult:
+    """Результат одного сканирования: имя утилиты, команда, вывод или ошибка."""
 
     tool: str
     command: list[str]
-    stdout: str
-    stderr: str
-    success: bool
+    stdout: str = ""
+    stderr: str = ""
+    success: bool = True
     error_message: str | None = None
 
 
-def _normalize_host(target: str) -> str:
-    """Извлекает hostname/IP из TARGET."""
-    target = target.strip()
-    if target.startswith(("http://", "https://")):
-        parsed = urlparse(target)
-        return parsed.hostname or target
-    return target.split(":")[0]
+@dataclass
+class ScanBundle:
+    """Агрегированные результаты сканеров для AI и отчётов."""
+
+    target: str
+    results: list[ScanResult] = field(default_factory=list)
+    nuclei: NucleiScanResult | None = None
+
+    def to_log_text(self) -> str:
+        """Сериализует результаты в единый текстовый лог."""
+        sections: list[str] = [f"=== ЦЕЛЬ АУДИТА: {self.target} ===\n"]
+        for item in self.results:
+            sections.append(f"--- {item.tool.upper()} ---")
+            sections.append(f"Команда: {' '.join(item.command)}")
+            sections.append(f"Успех: {item.success}")
+            if item.error_message:
+                sections.append(f"Ошибка: {item.error_message}")
+            if item.stderr.strip():
+                sections.append(f"STDERR:\n{item.stderr.strip()}")
+            sections.append(f"STDOUT:\n{item.stdout.strip() or '(пусто)'}")
+            sections.append("")
+        if self.nuclei:
+            sections.append(self.nuclei.to_log_text())
+        return "\n".join(sections)
+
+    def to_aggregated_dict(self) -> dict[str, Any]:
+        """
+        Структурированные данные для Claude, NVD и HTML-отчёта.
+        """
+        scanners = {
+            r.tool: {
+                "success": r.success,
+                "stdout": r.stdout,
+                "stderr": r.stderr,
+                "error": r.error_message,
+                "command": r.command,
+            }
+            for r in self.results
+        }
+        nuclei_block: dict[str, Any] = {}
+        if self.nuclei:
+            nuclei_block = {
+                "success": self.nuclei.success,
+                "findings": [f.to_dict() for f in self.nuclei.findings],
+                "cve_ids": self.nuclei.all_cve_ids(),
+                "raw_log": self.nuclei.to_log_text(),
+            }
+        return {
+            "target": self.target,
+            "scanners": scanners,
+            "nuclei": nuclei_block,
+            "combined_logs": self.to_log_text(),
+        }
 
 
-def _normalize_url(target: str) -> str:
-    """Формирует URL для WhatWeb."""
-    target = target.strip()
-    if target.startswith(("http://", "https://")):
-        return target
-    return f"http://{target}"
-
-
-def _run(
+async def _run_command_async(
     tool: str,
     command: Sequence[str],
     timeout: int = 600,
-) -> ScanOutput:
+) -> ScanResult:
     """
-    Безопасный запуск команды без shell=True.
-
-    :param tool: метка сканера (nmap / whatweb).
-    :param command: argv для subprocess.
-    :param timeout: лимит времени в секундах.
+    Асинхронный запуск внешней утилиты (без shell=True).
     """
-    argv = list(command)
     try:
-        completed = subprocess.run(
-            argv,
-            capture_output=True,
-            text=True,
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout_bytes, stderr_bytes = await asyncio.wait_for(
+            process.communicate(),
             timeout=timeout,
-            check=False,
         )
-        stdout = completed.stdout or ""
-        stderr = completed.stderr or ""
-        success = completed.returncode == 0
-        error_msg: str | None = None
-
-        if not success:
-            error_msg = f"Код возврата: {completed.returncode}"
-
-        combined = (stdout + stderr).lower()
-        unreachable = (
-            "failed to resolve",
-            "no route to host",
-            "connection refused",
-            "could not resolve",
-            "0 hosts up",
-            "unable to connect",
-            "name or service not known",
-        )
-        if any(marker in combined for marker in unreachable):
-            success = False
-            error_msg = (error_msg or "") + " | Хост недоступен или не отвечает"
-
-        return ScanOutput(
+    except asyncio.TimeoutError:
+        return ScanResult(
             tool=tool,
-            command=argv,
-            stdout=stdout,
-            stderr=stderr,
-            success=success,
-            error_message=error_msg.strip() if error_msg else None,
-        )
-    except subprocess.TimeoutExpired:
-        return ScanOutput(
-            tool=tool,
-            command=argv,
-            stdout="",
-            stderr="",
+            command=list(command),
             success=False,
             error_message=f"Превышен таймаут ({timeout} с)",
         )
     except FileNotFoundError:
-        return ScanOutput(
+        return ScanResult(
             tool=tool,
-            command=argv,
-            stdout="",
-            stderr="",
+            command=list(command),
             success=False,
             error_message=f"Утилита {tool} не найдена в PATH",
         )
     except OSError as exc:
-        return ScanOutput(
+        return ScanResult(
             tool=tool,
-            command=argv,
-            stdout="",
-            stderr="",
+            command=list(command),
             success=False,
             error_message=f"Ошибка ОС: {exc}",
         )
 
+    stdout = stdout_bytes.decode("utf-8", errors="replace")
+    stderr = stderr_bytes.decode("utf-8", errors="replace")
+    success = process.returncode == 0
+    error_msg: str | None = None
+    if not success:
+        error_msg = f"Код возврата: {process.returncode}"
 
-def run_nmap(target: str, timeout: int = 600) -> str:
-    """
-    Сканирование портов и версий сервисов (nmap -sV).
+    combined = (stdout + stderr).lower()
+    unreachable_markers = (
+        "failed to resolve",
+        "no route to host",
+        "connection refused",
+        "could not resolve",
+        "0 hosts up",
+        "unable to connect",
+    )
+    if any(marker in combined for marker in unreachable_markers):
+        success = False
+        error_msg = (error_msg or "") + " | Возможно, хост недоступен"
 
-    :param target: IP, hostname или URL.
-    :return: текстовый stdout (при ошибке — сообщение в stdout).
-    """
-    host = _normalize_host(target)
+    return ScanResult(
+        tool=tool,
+        command=list(command),
+        stdout=stdout,
+        stderr=stderr,
+        success=success,
+        error_message=error_msg.strip() if error_msg else None,
+    )
+
+
+async def run_nmap_async(target: str, timeout: int = 600) -> ScanResult:
+    """Nmap -sV: порты и версии сервисов."""
+    host = extract_host(target)
     command = ["nmap", "-sV", "-T4", "--open", "-oN", "-", host]
-    result = _run("nmap", command, timeout=timeout)
-    if result.error_message:
-        return (
-            f"[NMAP ERROR] {result.error_message}\n\n"
-            f"STDOUT:\n{result.stdout}\n\nSTDERR:\n{result.stderr}"
-        )
-    return result.stdout
+    return await _run_command_async("nmap", command, timeout=timeout)
 
 
-def run_whatweb(target: str, timeout: int = 300) -> str:
-    """
-    Fingerprinting веб-технологий (WhatWeb).
-
-    :param target: IP, hostname или URL.
-    :return: текстовый stdout.
-    """
-    url = _normalize_url(target)
+async def run_whatweb_async(target: str, timeout: int = 300) -> ScanResult:
+    """WhatWeb: fingerprint веб-стека."""
+    url = build_url(target)
     command = ["whatweb", "-a", "3", url]
-    result = _run("whatweb", command, timeout=timeout)
-    if result.error_message:
-        return (
-            f"[WHATWEB ERROR] {result.error_message}\n\n"
-            f"STDOUT:\n{result.stdout}\n\nSTDERR:\n{result.stderr}"
-        )
-    return result.stdout
+    return await _run_command_async("whatweb", command, timeout=timeout)
 
 
-def run_all_scanners(target: str) -> tuple[str, str]:
+async def run_dirb_async(target: str, timeout: int = 900) -> ScanResult:
+    """Dirb: перебор директорий (после параллельной фазы)."""
+    url = build_url(target)
+    wordlist = "/usr/share/dirb/wordlists/common.txt"
+    command = ["dirb", url, wordlist, "-S", "-r"]
+    return await _run_command_async("dirb", command, timeout=timeout)
+
+
+async def run_parallel_scans(target: str) -> ScanBundle:
     """
-    Последовательно запускает nmap и whatweb.
-
-    :return: кортеж (nmap_log, whatweb_log).
+    Параллельно запускает nmap, whatweb и nuclei через asyncio.gather.
+    Dirb выполняется последовательно после (длительный перебор).
     """
-    nmap_log = run_nmap(target)
-    whatweb_log = run_whatweb(target)
-    return nmap_log, whatweb_log
+    bundle = ScanBundle(target=target)
+
+    nmap_result, whatweb_result, nuclei_result = await asyncio.gather(
+        run_nmap_async(target),
+        run_whatweb_async(target),
+        run_nuclei_scan_async(target),
+    )
+
+    bundle.results.extend([nmap_result, whatweb_result])
+    bundle.nuclei = nuclei_result
+
+    print("[*] Dirb (последовательно)...")
+    dirb_result = await run_dirb_async(target)
+    bundle.results.append(dirb_result)
+
+    return bundle
