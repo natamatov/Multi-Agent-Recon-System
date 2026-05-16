@@ -14,7 +14,7 @@ def _get_llm_string() -> str:
         raise ValueError("CLAUDE_API_KEY не задан в .env")
     # LiteLLM требует ANTHROPIC_API_KEY
     os.environ["ANTHROPIC_API_KEY"] = api_key
-    return "anthropic/claude-3-5-sonnet-20241022"
+    return "anthropic/claude-sonnet-4-5"
 
 
 class SecurityAgents:
