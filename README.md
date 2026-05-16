@@ -37,6 +37,7 @@
 - Интеграция с **NVD API 2.0** для получения точного CVSS Score и описаний CVE.
 - Интеграция с **SearchSploit (Exploit-DB)** для поиска PoC.
 - Пассивный OSINT через **Shodan API** (не касается цели напрямую).
+- Специализированное сканирование **WordPress** через **WPScan** (плагины, темы, пользователи).
 
 📊 **UI и Отчетность**
 - Удобный веб-интерфейс на базе **Streamlit**.
@@ -55,7 +56,7 @@ Multi-Agent-Recon-System
 └── core/                      # Ядро бизнес-логики
     ├── config.py              # Загрузка и валидация .env
     ├── dependency_manager.py  # Проверка системных утилит (Kali)
-    ├── scanner.py             # Асинхронный запуск Nmap, WhatWeb, Subfinder, Nuclei
+    ├── scanner.py             # Асинхронный запуск Nmap, WhatWeb, Subfinder, Nuclei, WPScan
     ├── shodan_client.py       # Клиент Shodan API
     ├── nvd_client.py          # Клиент NIST NVD API
     ├── searchsploit_client.py # Интеграция с Exploit-DB
@@ -76,7 +77,7 @@ Multi-Agent-Recon-System
 
 ```bash
 sudo apt update
-sudo apt install -y nmap whatweb dirb exploitdb subfinder wkhtmltopdf
+sudo apt install -y nmap whatweb dirb exploitdb subfinder wkhtmltopdf wpscan
 ```
 
 Установка [Nuclei](https://github.com/projectdiscovery/nuclei):
@@ -114,6 +115,7 @@ cp .env.example .env
 | `TARGET` | Нет | IP, hostname или URL. Можно вводить напрямую в UI/CLI. |
 | `NVD_API_KEY` | Нет | Ключ NIST (повышает лимиты API и скорость обогащения CVE). |
 | `SHODAN_API_KEY` | Нет | Включает пассивный OSINT перед сканированием. |
+| `WPSCAN_API_KEY` | Нет | Включает поиск CVE в плагинах/темах WordPress (25 req/day бесплатно на wpscan.com). |
 
 ---
 

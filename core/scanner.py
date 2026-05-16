@@ -177,22 +177,32 @@ async def run_subfinder_async(target: str, timeout: int = 300) -> ScanResult:
     command = ["subfinder", "-d", host, "-silent"]
     return await _run_command_async("subfinder", command, timeout=timeout)
 
+async def run_wpscan_async(target: str, api_key: str | None = None, timeout: int = 600) -> ScanResult:
+    """WPScan: сканирование WordPress. Завершится быстро, если это не WP."""
+    url = build_url(target)
+    # -e vp,vt,u (vulnerable plugins, vulnerable themes, users)
+    command = ["wpscan", "--url", url, "-e", "vp,vt,u", "--batch"]
+    if api_key:
+        command.extend(["--api-token", api_key])
+    return await _run_command_async("wpscan", command, timeout=timeout)
 
-async def run_parallel_scans(target: str) -> ScanBundle:
+
+async def run_parallel_scans(target: str, wpscan_api_key: str | None = None) -> ScanBundle:
     """
-    Параллельно запускает nmap, whatweb и nuclei через asyncio.gather.
+    Параллельно запускает nmap, whatweb, nuclei, subfinder и wpscan через asyncio.gather.
     Dirb выполняется последовательно после (длительный перебор).
     """
     bundle = ScanBundle(target=target)
 
-    nmap_result, whatweb_result, nuclei_result, subfinder_result = await asyncio.gather(
+    nmap_result, whatweb_result, nuclei_result, subfinder_result, wpscan_result = await asyncio.gather(
         run_nmap_async(target),
         run_whatweb_async(target),
         run_nuclei_scan_async(target),
         run_subfinder_async(target),
+        run_wpscan_async(target, api_key=wpscan_api_key),
     )
 
-    bundle.results.extend([nmap_result, whatweb_result, subfinder_result])
+    bundle.results.extend([nmap_result, whatweb_result, subfinder_result, wpscan_result])
     bundle.nuclei = nuclei_result
 
     print("[*] Dirb (последовательно)...")

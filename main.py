@@ -74,8 +74,9 @@ def build_final_report(
 
 async def _run_audit_async(target: str) -> dict[str, Any]:
     """Асинхронная фаза сканирования и обогащения."""
-    print("[*] Параллельный запуск: nmap, whatweb, nuclei...")
-    bundle = await run_parallel_scans(target)
+    print("[*] Параллельный запуск: nmap, whatweb, nuclei, subfinder, wpscan...")
+    curr_settings = load_settings()
+    bundle = await run_parallel_scans(target, wpscan_api_key=curr_settings.wpscan_api_key)
 
     for result in bundle.results:
         status = "OK" if result.success else "WARN"

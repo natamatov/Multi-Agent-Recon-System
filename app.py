@@ -81,10 +81,13 @@ def _render_sidebar() -> bool:
 def _run_audit(target: str) -> None:
     """Выполняет сканирование и AI-анализ внутри st.status."""
     with st.status("Выполнение аудита...", expanded=True) as status:
-        st.write("🔄 **Шаг 1/2:** Запуск параллельного сканирования (nmap, whatweb, nuclei, dirb)...")
+        st.write("🔄 **Шаг 1/3:** Запуск параллельного сканирования (nmap, whatweb, nuclei, subfinder, wpscan)...")
         
         try:
-            bundle = asyncio.run(run_parallel_scans(target))
+            bundle = asyncio.run(run_parallel_scans(
+                target,
+                wpscan_api_key=st.session_state.get("wpscan_api_key")
+            ))
         except Exception as e:
             status.update(label="Ошибка сканирования", state="error")
             st.error(f"Не удалось выполнить сканирование: {e}")
@@ -150,6 +153,7 @@ def main() -> None:
         
     # Store settings in session for run_audit
     st.session_state.shodan_api_key = settings.shodan_api_key
+    st.session_state.wpscan_api_key = settings.wpscan_api_key
 
     st.divider()
 
