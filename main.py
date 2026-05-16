@@ -113,9 +113,6 @@ async def _run_audit_async(target: str) -> dict[str, Any]:
     print(f"    [+] SearchSploit: {len(searchsploit_results)} запросов")
 
     print("[*] Пассивный OSINT (Shodan)...")
-    # Достаем ключ из загруженных настроек
-    from core.config import load_settings
-    curr_settings = load_settings()
     shodan_res = run_shodan_recon(target, api_key=curr_settings.shodan_api_key)
     if shodan_res.get("success"):
         print(f"    [+] Shodan: найдено {len(shodan_res.get('open_ports', []))} портов")
