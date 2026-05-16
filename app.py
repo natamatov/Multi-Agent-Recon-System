@@ -300,9 +300,10 @@ def main() -> None:
         st.divider()
         st.subheader("📊 Результаты аудита")
 
-        tab_parsed, tab_cve, tab_sigma, tab_osint, tab_raw = st.tabs([
+        tab_parsed, tab_cve, tab_exploit, tab_sigma, tab_osint, tab_raw = st.tabs([
             "📄 Нормализованные данные",
             "🚨 Уязвимости (CVE)",
+            "💣 Эксплойты (PoC)",
             "🛡️ Sigma & Playbook",
             "🌐 OSINT & Dorking",
             "📜 Сырые логи",
@@ -315,6 +316,10 @@ def main() -> None:
         with tab_cve:
             st.subheader("Анализ уязвимостей (Threat Intel Agent)")
             st.markdown(res.get("cve_data", "_Уязвимости не обнаружены._"))
+
+        with tab_exploit:
+            st.subheader("Верификация эксплойтов (Red Team Agent)")
+            st.markdown(res.get("exploit_data", "_Эксплойты не загружены._"))
 
         with tab_sigma:
             st.subheader("Защитный Playbook & Sigma-правила (SOC Engineer)")

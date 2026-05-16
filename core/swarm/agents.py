@@ -1,7 +1,7 @@
 import os
 
 from crewai import Agent
-from .tools import pompem_exploit_search
+from .tools import pompem_exploit_search, pompem_exploit_download, install_exploit_dependencies, execute_exploit_payload
 
 
 def _get_llm_string() -> str:
@@ -52,7 +52,23 @@ class SecurityAgents:
             verbose=True,
             allow_delegation=False,
             llm=self.llm,
-            tools=[pompem_exploit_search],
+            tools=[pompem_exploit_search, pompem_exploit_download],
+        )
+
+    def red_team_agent(self) -> Agent:
+        return Agent(
+            role="Эксперт по эксплуатации (Red Team)",
+            goal="Верифицировать уязвимости путем загрузки и анализа эксплойтов, а также подготовки команд для их запуска.",
+            backstory=(
+                "Вы — элитный специалист Red Team. Ваша задача — не просто найти уязвимость, "
+                "а доказать её наличие (Proof of Concept). Вы загружаете код эксплойта, "
+                "анализируете его на безопасность и адаптируете под целевую систему. "
+                "Вы работаете строго в рамках закона и предоставляете готовые команды для запуска."
+            ),
+            verbose=True,
+            allow_delegation=False,
+            llm=self.llm,
+            tools=[pompem_exploit_download, install_exploit_dependencies, execute_exploit_payload],
         )
 
     def soc_engineer_agent(self) -> Agent:

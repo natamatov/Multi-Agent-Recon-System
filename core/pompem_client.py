@@ -81,6 +81,48 @@ class PompemClient:
             ))
         return matches
 
+    def download_exploit(self, url: str, target_dir: str = "exploits") -> str | None:
+        """
+        Загружает код эксплойта по ссылке.
+        """
+        import os
+        if not os.path.exists(target_dir):
+            os.makedirs(target_dir)
+
+        # Логика загрузки для PacketStorm
+        if "packetstormsecurity.com" in url:
+            file_id_match = re.search(r'/files/(\d+)/', url)
+            if file_id_match:
+                file_id = file_id_match.group(1)
+                file_name = f"exploit_{file_id}.txt"
+                download_url = f"https://packetstormsecurity.com/files/download/{file_id}/{file_name}"
+                
+                try:
+                    req = urllib.request.Request(download_url, headers={"User-Agent": self.user_agent})
+                    with urllib.request.urlopen(req, timeout=15) as response:
+                        content = response.read()
+                        file_path = os.path.join(target_dir, file_name)
+                        with open(file_path, "wb") as f:
+                            f.write(content)
+                        return file_path
+                except Exception:
+                    return None
+
+        elif "cxsecurity.com" in url:
+            ascii_url = url.replace("/issue/", "/ascii/")
+            try:
+                content = self._fetch_html(ascii_url)
+                if content:
+                    file_name = url.split("/")[-1] + ".txt"
+                    file_path = os.path.join(target_dir, file_name)
+                    with open(file_path, "w", encoding="utf-8") as f:
+                        f.write(content)
+                    return file_path
+            except Exception:
+                return None
+
+        return None
+
     def search_all(self, query: str) -> list[dict[str, Any]]:
         """Выполняет поиск по всем доступным базам."""
         all_matches = []

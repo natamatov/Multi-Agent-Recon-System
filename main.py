@@ -67,6 +67,7 @@ def build_final_report(
         "ai_summary": swarm_results.get("final_summary", ""),
         "parsed_data": swarm_results.get("parsed_data", ""),
         "cve_data": swarm_results.get("cve_data", ""),
+        "exploit_data": swarm_results.get("exploit_data", ""),
         "sigma_playbook": swarm_results.get("sigma_playbook", ""),
         "osint_dorking": swarm_results.get("osint_dorking", ""),
         "success": swarm_results.get("success", False),

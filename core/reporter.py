@@ -143,6 +143,7 @@ def generate_html_report(report: dict[str, Any]) -> str:
     cves = report.get("cves", [])
     nuclei = report.get("nuclei_findings", [])
     waf = report.get("waf")
+    exploit_data = report.get("exploit_data", "")
     dev_instructions = report.get("developer_instructions", [])
     nvd_count = sum(1 for c in cves if c.get("nvd_verified") or c.get("verified"))
 
@@ -301,6 +302,13 @@ def generate_html_report(report: dict[str, Any]) -> str:
     <section>
       <h2>WAF / CDN Protection</h2>
       {_render_waf_info(waf)}
+    </section>
+
+    <section>
+      <h2>Exploit Verification (PoC)</h2>
+      <div style="background: #fdf2f2; padding: 15px; border-left: 5px solid #e02424; border-radius: 4px;">
+        {exploit_data if exploit_data else "<p>Эксплойты не верифицированы.</p>"}
+      </div>
     </section>
 
     <section>

@@ -8,8 +8,8 @@ from __future__ import annotations
 import shutil
 from typing import Iterable
 
-# Утилиты пайплайна (включая nuclei, searchsploit, wkhtmltopdf, subfinder, wpscan)
-DEFAULT_REQUIRED_TOOLS: tuple[str, ...] = ("nmap", "whatweb", "dirb", "nuclei", "searchsploit", "wkhtmltopdf", "subfinder", "wpscan", "nikto", "ffuf")
+# Утилиты пайплайна
+DEFAULT_REQUIRED_TOOLS: tuple[str, ...] = ("nmap", "whatweb", "dirb", "nuclei", "searchsploit", "wkhtmltopdf", "subfinder", "wpscan", "nikto", "ffuf", "pompem", "webcheck")
 
 # Подсказки для apt в Kali/Debian
 _APT_PACKAGES: dict[str, str] = {
@@ -23,10 +23,14 @@ _APT_PACKAGES: dict[str, str] = {
     "wpscan": "wpscan",
     "nikto": "nikto",
     "ffuf": "ffuf",
+    "pompem": "Встроено (M.A.R.S. Exploit Client)",
+    "webcheck": "Встроено (M.A.R.S. WAF Detector)",
 }
 
 def is_tool_available(tool_name: str) -> bool:
-    """Проверяет доступность утилит через shutil.which."""
+    """Проверяет доступность утилит через shutil.which или наличие встроенных модулей."""
+    if tool_name in ["pompem", "webcheck"]:
+        return True # Эти модули встроены в ядро
     return shutil.which(tool_name) is not None
 
 def check_tools(tools: tuple[str, ...] | None = None) -> dict[str, bool]:
