@@ -10,16 +10,15 @@ import asyncio
 import json
 from typing import Any
 
-import pandas as pd
 import streamlit as st
 
 from core.config import try_load_settings
 from core.dependency_manager import (
     _APT_PACKAGES,
-    all_tools_ready,
     check_tools,
     missing_tools,
 )
+from core.ping_checker import check_target_alive
 from core.scanner import run_parallel_scans
 from core.shodan_client import run_shodan_recon
 from core.virustotal_client import run_virustotal_recon
@@ -28,113 +27,215 @@ from core.swarm.orchestrator import MARSSwarmManager
 
 # ——— Конфигурация страницы ———
 st.set_page_config(
-    page_title="MARS SOLUTIONS - Security Assessment Hub",
+    page_title="M.A.R.S. Security Assessment Hub",
     page_icon="🛡️",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-APP_TITLE = "MARS SOLUTIONS - Security Assessment Hub"
+APP_TITLE = "M.A.R.S. — Multi-Agent Recon System"
 
 
 def _init_session() -> None:
-    """Инициализация session_state."""
     if "tool_status" not in st.session_state:
         st.session_state.tool_status = check_tools()
     if "audit_result" not in st.session_state:
         st.session_state.audit_result = None
     if "raw_logs" not in st.session_state:
         st.session_state.raw_logs = None
+    if "ping_result" not in st.session_state:
+        st.session_state.ping_result = None
 
 
 def _render_sidebar() -> bool:
-    """Боковая панель: статус утилит, ошибки, кнопка перепроверки."""
-    st.sidebar.header("Зависимости системы")
+    st.sidebar.header("🔧 Зависимости системы")
     status: dict[str, bool] = st.session_state.tool_status
 
-    for tool, available in status.items():
-        icon = "✅" if available else "❌"
-        st.sidebar.write(f"{icon} **{tool}**")
+    all_ok = all(status.values())
+    if all_ok:
+        st.sidebar.success("✅ Все утилиты доступны")
+    else:
+        st.sidebar.warning("⚠️ Некоторые утилиты отсутствуют")
+
+    with st.sidebar.expander("Статус утилит", expanded=not all_ok):
+        for tool, available in status.items():
+            icon = "✅" if available else "❌"
+            st.write(f"{icon} `{tool}`")
 
     missing = missing_tools(status)
     if missing:
+        st.sidebar.divider()
         for tool in missing:
             package = _APT_PACKAGES.get(tool, tool)
-            hint = f"sudo apt install {package}"
-            st.sidebar.error(
-                f"Утилита `{tool}` не найдена.\n\n"
-                f"Установите: `{hint}`"
-            )
+            st.sidebar.code(f"sudo apt install {package}", language="bash")
 
-        if st.sidebar.button("Проверить зависимости снова", use_container_width=True):
+        if st.sidebar.button("🔄 Проверить снова", use_container_width=True):
             st.session_state.tool_status = check_tools()
             st.rerun()
-
-        st.sidebar.warning(
-            "Установите все утилиты, затем нажмите «Проверить зависимости снова»."
-        )
         return False
 
-    st.sidebar.success("Все утилиты доступны.")
+    if st.sidebar.button("🔄 Обновить статус", use_container_width=True):
+        st.session_state.tool_status = check_tools()
+        st.rerun()
+
+    # Показать сетевые настройки если заданы
+    settings = st.session_state.get("_settings")
+    if settings:
+        st.sidebar.divider()
+        st.sidebar.caption("🌐 Сетевые настройки")
+        if settings.network_interface:
+            st.sidebar.info(f"Интерфейс: `{settings.network_interface}`")
+        if settings.http_proxy:
+            st.sidebar.info(f"Прокси: `{settings.http_proxy}`")
+        if settings.source_ip:
+            st.sidebar.info(f"Source IP: `{settings.source_ip}`")
+
     return True
 
 
 def _run_audit(target: str) -> None:
-    """Выполняет сканирование и AI-анализ внутри st.status."""
-    with st.status("Выполнение аудита...", expanded=True) as status:
-        st.write("🔄 **Шаг 1/3:** Запуск параллельного сканирования (nmap, whatweb, nuclei, subfinder, wpscan)...")
-        
+    """Выполняет полный цикл аудита с детальным прогрессом."""
+    settings = st.session_state.get("_settings")
+
+    with st.status("🚀 Выполнение аудита...", expanded=True) as audit_status:
+
+        # ─── Шаг 0: Проверка доступности цели ───────────────────────────────
+        st.write("---")
+        st.write("**[0/4] 📡 Проверка доступности цели...**")
+        ping_result = asyncio.run(check_target_alive(target))
+        st.session_state.ping_result = ping_result
+
+        if ping_result.is_alive:
+            lat = f" ({ping_result.latency_ms:.1f} ms)" if ping_result.latency_ms else ""
+            ip_info = f" → `{ping_result.resolved_ip}`" if ping_result.resolved_ip else ""
+            st.success(f"✅ Цель доступна via **{ping_result.method}**{lat}{ip_info}")
+        else:
+            # Хост недоступен — предупреждаем, но не останавливаем
+            # (файрвол может блокировать ping, но сканеры всё равно попробуют)
+            st.warning(
+                f"⚠️ Цель не отвечает на ping ({ping_result.error}). "
+                "Сканирование будет продолжено — возможно, ICMP заблокирован файрволом."
+            )
+
+        # ─── Шаг 1: Параллельное сканирование ───────────────────────────────
+        st.write("---")
+        st.write("**[1/4] 🔍 Параллельный запуск сканеров...**")
+
+        scanners_info = [
+            ("nmap", "Порты и версии сервисов"),
+            ("whatweb", "Fingerprint веб-стека"),
+            ("nuclei", "CVE и misconfig шаблоны"),
+            ("subfinder", "Поиск поддоменов"),
+            ("wpscan", "WordPress аудит"),
+            ("nikto", "Уязвимости веб-сервера"),
+        ]
+        cols = st.columns(3)
+        for i, (tool, desc) in enumerate(scanners_info):
+            with cols[i % 3]:
+                st.info(f"⏳ **{tool}**\n{desc}")
+
         try:
             bundle = asyncio.run(run_parallel_scans(
                 target,
-                wpscan_api_key=st.session_state.get("wpscan_api_key")
+                wpscan_api_key=settings.wpscan_api_key if settings else None,
+                network_interface=settings.network_interface if settings else None,
+                source_ip=settings.source_ip if settings else None,
+                http_proxy=settings.http_proxy if settings else None,
             ))
         except Exception as e:
-            status.update(label="Ошибка сканирования", state="error")
-            st.error(f"Не удалось выполнить сканирование: {e}")
+            audit_status.update(label="❌ Ошибка сканирования", state="error")
+            st.error(f"Критическая ошибка сканирования: {e}")
             return
-            
+
         logs = bundle.to_log_text()
         st.session_state.raw_logs = logs
-        st.write("✅ Сканирование завершено.")
 
-        st.write("🤖 **Шаг 2/4:** Пассивный OSINT (Shodan + VirusTotal)...")
-        shodan_res = run_shodan_recon(target, api_key=st.session_state.get("shodan_api_key"))
-        vt_res = run_virustotal_recon(target, api_key=st.session_state.get("virustotal_api_key"))
+        # Вывод итогов по каждому сканеру
+        st.write("📊 **Результаты сканирования:**")
+        cols2 = st.columns(3)
+        for i, result in enumerate(bundle.results):
+            with cols2[i % 3]:
+                if result.success:
+                    lines = result.stdout.strip().count("\n") + 1 if result.stdout.strip() else 0
+                    st.success(f"✅ **{result.tool}** — {lines} строк")
+                else:
+                    st.error(f"❌ **{result.tool}** — {result.error_message}")
 
-        if shodan_res.get("success"):
-            st.write(f"✅ Shodan нашел {len(shodan_res.get('open_ports', []))} портов")
-        else:
-            st.write(f"⚠️ Shodan: {shodan_res.get('error')}")
+        if bundle.nuclei:
+            n = len(bundle.nuclei.findings)
+            if bundle.nuclei.success:
+                st.success(f"✅ **nuclei** — {n} находок")
+            else:
+                st.warning(f"⚠️ **nuclei** — {bundle.nuclei.error_message}")
 
-        if vt_res.get("success"):
-            malicious = vt_res.get("malicious", 0)
-            st.write(f"✅ VirusTotal: {malicious} антивирусов пометили цель как вредоносную" if malicious else "✅ VirusTotal: цель не числится вредоносной")
-        else:
-            st.write(f"⚠️ VirusTotal: {vt_res.get('error')}")
+        # ─── Шаг 2: OSINT ────────────────────────────────────────────────────
+        st.write("---")
+        st.write("**[2/4] 🌐 Пассивная разведка (OSINT)...**")
 
-        import json as _json
-        osint_data = f"SHODAN: {_json.dumps(shodan_res, ensure_ascii=False)}\n\n"
-        osint_data += f"VIRUSTOTAL: {_json.dumps(vt_res, ensure_ascii=False)}\n\n"
+        col_s, col_v = st.columns(2)
+        with col_s:
+            with st.spinner("Запрос к Shodan..."):
+                shodan_res = run_shodan_recon(
+                    target,
+                    api_key=settings.shodan_api_key if settings else None
+                )
+            if shodan_res.get("success"):
+                ports = shodan_res.get("open_ports", [])
+                st.success(f"✅ Shodan: {len(ports)} открытых портов {ports[:5]}")
+            else:
+                st.info(f"ℹ️ Shodan: {shodan_res.get('error')}")
+
+        with col_v:
+            with st.spinner("Запрос к VirusTotal..."):
+                vt_res = run_virustotal_recon(
+                    target,
+                    api_key=settings.virustotal_api_key if settings else None
+                )
+            if vt_res.get("success"):
+                mal = vt_res.get("malicious", 0)
+                if mal > 0:
+                    st.error(f"🚨 VirusTotal: {mal} движков считают цель вредоносной!")
+                else:
+                    st.success("✅ VirusTotal: цель чистая (0 детектов)")
+            else:
+                st.info(f"ℹ️ VirusTotal: {vt_res.get('error')}")
+
+        osint_data = f"SHODAN: {json.dumps(shodan_res, ensure_ascii=False)}\n\n"
+        osint_data += f"VIRUSTOTAL: {json.dumps(vt_res, ensure_ascii=False)}\n\n"
         subfinder_res = next((r for r in bundle.results if r.tool == "subfinder"), None)
-        if subfinder_res and subfinder_res.success:
+        if subfinder_res and subfinder_res.success and subfinder_res.stdout.strip():
+            subs = subfinder_res.stdout.strip().splitlines()
+            st.info(f"🔗 Subfinder нашёл {len(subs)} поддоменов")
             osint_data += f"SUBFINDER:\n{subfinder_res.stdout}\n"
 
-        st.write("🤖 **Шаг 4/4:** Запуск мультиагентного роя (CrewAI)...")
-        
-        def step_callback(step_info):
-            st.write(f"⚙️ Рой агентов выполняет шаг: {getattr(step_info, 'name', 'анализ')}")
+        # ─── Шаг 3: AI Swarm ─────────────────────────────────────────────────
+        st.write("---")
+        st.write("**[3/4] 🤖 Запуск мультиагентного роя (CrewAI)...**")
 
-        manager = MARSSwarmManager(step_callback=step_callback)
-        swarm_results = manager.run_analysis(logs, osint_data=osint_data)
+        agent_steps = []
+
+        def step_callback(step_info):
+            name = getattr(step_info, "name", None) or "выполняет анализ"
+            agent_steps.append(name)
+            st.write(f"  ⚙️ Агент: *{name}*")
+
+        with st.spinner("Агенты анализируют данные... Это займёт 1-3 минуты."):
+            manager = MARSSwarmManager(step_callback=step_callback)
+            swarm_results = manager.run_analysis(logs, osint_data=osint_data)
 
         if not swarm_results.get("success"):
-            status.update(label="Ошибка AI-анализа", state="error")
-            st.error(swarm_results.get("error"))
+            audit_status.update(label="❌ Ошибка AI-анализа", state="error")
+            st.error(f"Ошибка роя агентов: {swarm_results.get('error')}")
             return
 
+        st.success(f"✅ AI Swarm завершён ({len(agent_steps)} шагов)")
+
+        # ─── Шаг 4: Готово ───────────────────────────────────────────────────
+        st.write("---")
+        st.write("**[4/4] 📋 Отчёт готов!** Перейдите к вкладкам ниже.")
+
         st.session_state.audit_result = swarm_results
-        status.update(label="Аудит завершён", state="complete")
+        audit_status.update(label="✅ Аудит завершён успешно!", state="complete")
 
 
 def main() -> None:
@@ -142,83 +243,83 @@ def main() -> None:
 
     st.title(f"🛡️ {APP_TITLE}")
     st.caption(
-        "Легальное сканирование и сопоставление CVE с использованием Multi-Agent Swarm. "
-        "Используйте только на системах с письменным разрешением."
+        "Легальный Vulnerability Assessment с Multi-Agent AI Swarm. "
+        "**Используйте только на системах с письменным разрешением.**"
     )
 
     deps_ok = _render_sidebar()
-    if not deps_ok:
-        st.warning(
-            "Основной функционал заблокирован до установки всех зависимостей. "
-            "См. боковую панель."
-        )
-        st.stop()
 
     settings = try_load_settings()
     if settings is None:
         st.error(
-            "Не настроен `CLAUDE_API_KEY` в файле `.env`. "
-            "Ключ Anthropic обязателен для работы роя агентов."
+            "❌ Не задан `CLAUDE_API_KEY` в файле `.env`. "
+            "Скопируйте `.env.example` → `.env` и вставьте ваш ключ Anthropic."
         )
         st.stop()
-        
-    # Store settings in session for run_audit
-    st.session_state.shodan_api_key = settings.shodan_api_key
-    st.session_state.wpscan_api_key = settings.wpscan_api_key
-    st.session_state.virustotal_api_key = settings.virustotal_api_key
 
+    st.session_state["_settings"] = settings
+
+    if not deps_ok:
+        st.warning("⚠️ Установите все системные утилиты (см. боковую панель) и обновите статус.")
+        st.stop()
 
     st.divider()
 
-    target = st.text_input(
-        "TARGET (IP, домен или URL)",
-        placeholder="192.168.1.10 или https://example.com",
-    )
-
-    run_clicked = st.button(
-        "Запустить аудит",
-        type="primary",
-        use_container_width=False,
-    )
+    col_input, col_btn = st.columns([4, 1])
+    with col_input:
+        target = st.text_input(
+            "🎯 TARGET (IP, домен или URL)",
+            placeholder="192.168.1.10 или https://example.com",
+            label_visibility="collapsed",
+        )
+    with col_btn:
+        run_clicked = st.button("🚀 Запустить аудит", type="primary", use_container_width=True)
 
     if run_clicked:
         if not target or not target.strip():
-            st.warning("Укажите TARGET перед запуском.")
+            st.warning("⚠️ Укажите TARGET перед запуском.")
         else:
+            # Очищаем предыдущие результаты
+            st.session_state.audit_result = None
+            st.session_state.raw_logs = None
+            st.session_state.ping_result = None
             _run_audit(target.strip())
-            st.rerun()
 
-    # Вывод результатов
+    # ─── Вывод результатов ───────────────────────────────────────────────────
     res = st.session_state.audit_result
     if res and st.session_state.raw_logs:
         st.divider()
-        
+        st.subheader("📊 Результаты аудита")
+
         tab_parsed, tab_cve, tab_sigma, tab_osint, tab_raw = st.tabs([
-            "Нормализованные данные", 
-            "Уязвимости (CVE)", 
-            "Sigma Правила & Playbook", 
-            "OSINT & Dorking",
-            "Сырые логи сканеров"
+            "📄 Нормализованные данные",
+            "🚨 Уязвимости (CVE)",
+            "🛡️ Sigma & Playbook",
+            "🌐 OSINT & Dorking",
+            "📜 Сырые логи",
         ])
 
         with tab_parsed:
-            st.subheader("Извлеченные данные (Parser Agent)")
-            st.markdown(res.get("parsed_data", "Данные отсутствуют."))
+            st.subheader("Извлечённые данные (Parser Agent)")
+            st.markdown(res.get("parsed_data", "_Нет данных._"))
 
         with tab_cve:
-            st.subheader("Обогащение и CVE (Threat Intel Agent)")
-            st.markdown(res.get("cve_data", "Уязвимости не найдены."))
+            st.subheader("Анализ уязвимостей (Threat Intel Agent)")
+            st.markdown(res.get("cve_data", "_Уязвимости не обнаружены._"))
 
         with tab_sigma:
-            st.subheader("Защитный Playbook (SOC Engineer Agent)")
-            st.markdown(res.get("sigma_playbook", "План защиты не сгенерирован."))
+            st.subheader("Защитный Playbook & Sigma-правила (SOC Engineer)")
+            st.markdown(res.get("sigma_playbook", "_Playbook не сгенерирован._"))
 
         with tab_osint:
-            st.subheader("Поверхность атаки и Google Dorks (OSINT Agent)")
-            st.markdown(res.get("osint_dorking", "Google Dorks не сгенерированы."))
+            st.subheader("Поверхность атаки & Google Dorks (OSINT Agent)")
+            ping = st.session_state.get("ping_result")
+            if ping:
+                st.info(ping.summary())
+            st.markdown(res.get("osint_dorking", "_OSINT данные не сгенерированы._"))
 
         with tab_raw:
-            st.markdown("#### Комбинированный лог сканирования")
+            st.subheader("Сырые логи сканирования")
             st.code(st.session_state.raw_logs, language="text")
 
 

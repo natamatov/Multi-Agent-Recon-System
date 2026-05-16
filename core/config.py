@@ -32,6 +32,9 @@ class Settings:
     shodan_api_key: str | None = None
     wpscan_api_key: str | None = None
     virustotal_api_key: str | None = None
+    network_interface: str | None = None
+    source_ip: str | None = None
+    http_proxy: str | None = None
 
 
 def _fail(message: str) -> None:
@@ -121,13 +124,19 @@ def load_settings(env_path: str | None = None) -> Settings:
     shodan_key = os.getenv("SHODAN_API_KEY")
     wpscan_key = os.getenv("WPSCAN_API_KEY")
     vt_key = os.getenv("VIRUSTOTAL_API_KEY")
+    net_iface = os.getenv("NETWORK_INTERFACE") or None
+    source_ip = os.getenv("SOURCE_IP") or None
+    http_proxy = os.getenv("HTTP_PROXY") or None
 
     return Settings(
         claude_api_key=api_key,
         target=target,
         shodan_api_key=shodan_key,
         wpscan_api_key=wpscan_key,
-        virustotal_api_key=vt_key
+        virustotal_api_key=vt_key,
+        network_interface=net_iface,
+        source_ip=source_ip,
+        http_proxy=http_proxy,
     )
 
 def try_load_settings(env_path: str | None = None) -> Settings | None:
@@ -157,11 +166,17 @@ def try_load_settings(env_path: str | None = None) -> Settings | None:
     shodan_key = os.getenv("SHODAN_API_KEY")
     wpscan_key = os.getenv("WPSCAN_API_KEY")
     vt_key = os.getenv("VIRUSTOTAL_API_KEY")
+    net_iface = os.getenv("NETWORK_INTERFACE") or None
+    source_ip = os.getenv("SOURCE_IP") or None
+    http_proxy = os.getenv("HTTP_PROXY") or None
 
     return Settings(
         claude_api_key=key,
         target=target,
         shodan_api_key=shodan_key,
         wpscan_api_key=wpscan_key,
-        virustotal_api_key=vt_key
+        virustotal_api_key=vt_key,
+        network_interface=net_iface,
+        source_ip=source_ip,
+        http_proxy=http_proxy,
     )

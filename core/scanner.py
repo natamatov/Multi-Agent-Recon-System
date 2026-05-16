@@ -150,17 +150,32 @@ async def _run_command_async(
     )
 
 
-async def run_nmap_async(target: str, timeout: int = 600) -> ScanResult:
+async def run_nmap_async(
+    target: str,
+    timeout: int = 600,
+    interface: str | None = None,
+    source_ip: str | None = None,
+) -> ScanResult:
     """Nmap -sV: порты и версии сервисов."""
     host = extract_host(target)
     command = ["nmap", "-sV", "-T4", "--open", "-oN", "-", host]
+    if interface:
+        command.extend(["-e", interface])
+    if source_ip:
+        command.extend(["-S", source_ip])
     return await _run_command_async("nmap", command, timeout=timeout)
 
 
-async def run_whatweb_async(target: str, timeout: int = 300) -> ScanResult:
+async def run_whatweb_async(
+    target: str,
+    timeout: int = 300,
+    proxy: str | None = None,
+) -> ScanResult:
     """WhatWeb: fingerprint веб-стека."""
     url = build_url(target)
     command = ["whatweb", "-a", "3", url]
+    if proxy:
+        command.extend(["--proxy", proxy])
     return await _run_command_async("whatweb", command, timeout=timeout)
 
 
@@ -205,16 +220,21 @@ async def run_ffuf_async(target: str, timeout: int = 300) -> ScanResult:
     return await _run_command_async("ffuf", command, timeout=timeout)
 
 
-async def run_parallel_scans(target: str, wpscan_api_key: str | None = None) -> ScanBundle:
+async def run_parallel_scans(
+    target: str,
+    wpscan_api_key: str | None = None,
+    network_interface: str | None = None,
+    source_ip: str | None = None,
+    http_proxy: str | None = None,
+) -> ScanBundle:
     """
-    Параллельно запускает nmap, whatweb, nuclei, subfinder, wpscan, nikto через asyncio.gather.
-    ffuf и dirb выполняются последовательно.
+    Параллельно запускает все сканеры.
     """
     bundle = ScanBundle(target=target)
 
     nmap_r, whatweb_r, nuclei_r, subfinder_r, wpscan_r, nikto_r = await asyncio.gather(
-        run_nmap_async(target),
-        run_whatweb_async(target),
+        run_nmap_async(target, interface=network_interface, source_ip=source_ip),
+        run_whatweb_async(target, proxy=http_proxy),
         run_nuclei_scan_async(target),
         run_subfinder_async(target),
         run_wpscan_async(target, api_key=wpscan_api_key),
