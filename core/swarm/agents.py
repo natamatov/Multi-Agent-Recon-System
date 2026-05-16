@@ -1,24 +1,27 @@
-from crewai import Agent
-from langchain_anthropic import ChatAnthropic
 import os
 
-def get_claude_llm():
-    """Возвращает инициализированную модель Claude 3.5 Sonnet."""
-    api_key = os.getenv("CLAUDE_API_KEY")
+from crewai import Agent
+
+
+def _get_llm_string() -> str:
+    """
+    Возвращает строковый идентификатор LLM для CrewAI.
+    CrewAI использует LiteLLM внутри — строка вида 'anthropic/model-name'.
+    Заодно гарантируем, что ANTHROPIC_API_KEY задан (CrewAI/LiteLLM ищет именно его).
+    """
+    api_key = os.getenv("CLAUDE_API_KEY") or os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
-        raise ValueError("CLAUDE_API_KEY не задан в переменных окружения.")
-    return ChatAnthropic(
-        model_name="claude-3-5-sonnet-20240620",
-        anthropic_api_key=api_key,
-        temperature=0.2
-    )
+        raise ValueError("CLAUDE_API_KEY не задан в .env")
+    # LiteLLM требует ANTHROPIC_API_KEY
+    os.environ["ANTHROPIC_API_KEY"] = api_key
+    return "anthropic/claude-3-5-sonnet-20241022"
 
 
 class SecurityAgents:
     """Определяет агентов для мультиагентного анализа (Swarm)."""
 
     def __init__(self):
-        self.llm = get_claude_llm()
+        self.llm = _get_llm_string()
 
     def parser_agent(self) -> Agent:
         return Agent(
