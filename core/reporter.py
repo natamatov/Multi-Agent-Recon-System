@@ -81,6 +81,32 @@ def _render_nuclei_rows(findings: list[dict[str, Any]]) -> str:
             "</tr>"
         )
     return "\n".join(rows) if rows else "<tr><td colspan='4'>Находок Nuclei нет</td></tr>"
+    
+    
+def _render_waf_info(waf: dict[str, Any] | None) -> str:
+    if not waf or not waf.get("detected"):
+        return "<p>Защита WAF/CDN не обнаружена.</p>"
+    
+    providers = ", ".join(waf.get("providers", []))
+    hints = waf.get("hints", [])
+    headers = waf.get("relevant_headers", {})
+    
+    html_output = [
+        f"<p><strong>Обнаруженная защита:</strong> <span class='badge high'>{_esc(providers)}</span></p>",
+        "<h4>Рекомендации по обходу (Bypass Hints):</h4>",
+        "<ul>"
+    ]
+    for hint in hints:
+        html_output.append(f"<li>{_esc(hint)}</li>")
+    html_output.append("</ul>")
+    
+    if headers:
+        html_output.append("<h4>Заголовки детекции:</h4><ul>")
+        for k, v in headers.items():
+            html_output.append(f"<li><code>{_esc(k)}:</code> {_esc(v)}</li>")
+        html_output.append("</ul>")
+        
+    return "".join(html_output)
 
 
 def _render_dev_instructions(instructions: list[Any]) -> str:
@@ -116,6 +142,7 @@ def generate_html_report(report: dict[str, Any]) -> str:
     technologies = report.get("technologies", [])
     cves = report.get("cves", [])
     nuclei = report.get("nuclei_findings", [])
+    waf = report.get("waf")
     dev_instructions = report.get("developer_instructions", [])
     nvd_count = sum(1 for c in cves if c.get("nvd_verified") or c.get("verified"))
 
@@ -269,6 +296,11 @@ def generate_html_report(report: dict[str, Any]) -> str:
         </thead>
         <tbody>{_render_nuclei_rows(nuclei)}</tbody>
       </table>
+    </section>
+
+    <section>
+      <h2>WAF / CDN Protection</h2>
+      {_render_waf_info(waf)}
     </section>
 
     <section>

@@ -1,6 +1,7 @@
 import os
 
 from crewai import Agent
+from .tools import pompem_exploit_search
 
 
 def _get_llm_string() -> str:
@@ -51,6 +52,7 @@ class SecurityAgents:
             verbose=True,
             allow_delegation=False,
             llm=self.llm,
+            tools=[pompem_exploit_search],
         )
 
     def soc_engineer_agent(self) -> Agent:
@@ -71,16 +73,14 @@ class SecurityAgents:
 
     def osint_recon_agent(self) -> Agent:
         return Agent(
-            role="Специалист по пассивной разведке (OSINT) и Dorking",
-            goal="Составить профиль поверхности атаки на основе поддоменов и данных Shodan, "
-                 "а также сгенерировать Google Dorks для поиска утечек информации.",
+            role="Специалист по пассивной разведке (OSINT) и детекции WAF",
+            goal="Составить профиль поверхности атаки, идентифицировать WAF/CDN и сгенерировать Google Dorks для поиска утечек.",
             backstory=(
-                "Вы — эксперт по разведке на основе открытых источников (OSINT). "
-                "Вы анализируете сырые данные от Shodan (открытые порты, сертификаты) "
-                "и Subfinder (список поддоменов). Ваша цель — понять, какие активы торчат "
-                "в интернет, и составить мощные поисковые запросы (Google Dorks), "
-                "которые помогут найти слитые PDF-документы, открытые админки (например, WordPress) "
-                "или забытые файлы конфигурации (.env) на этих доменах."
+                "Вы — эксперт по разведке на основе открытых источников (OSINT) и выявлению инфраструктурных слоев (WAF/CDN). "
+                "Вы анализируете сырые данные от Shodan, Subfinder и результаты WebCheck-детекции. "
+                "Ваша цель — понять, какие активы защищены Cloudflare или другими WAF, и составить "
+                "рекомендации по поиску реального IP (origin IP), а также Google Dorks для поиска "
+                "слитых данных и открытых админок на этих доменах."
             ),
             verbose=True,
             allow_delegation=False,

@@ -62,6 +62,7 @@ def build_final_report(
         "nuclei_findings": nuclei_findings,
         "nvd_enrichment": nvd_records,
         "searchsploit": searchsploit_results,
+        "waf": bundle.waf,
         "raw_scan_logs": bundle.to_log_text(),
         "ai_summary": swarm_results.get("final_summary", ""),
         "parsed_data": swarm_results.get("parsed_data", ""),
@@ -133,6 +134,9 @@ async def _run_audit_async(target: str) -> dict[str, Any]:
     subfinder_res = next((r for r in bundle.results if r.tool == "subfinder"), None)
     if subfinder_res and subfinder_res.success:
         osint_data += f"SUBFINDER:\n{subfinder_res.stdout}\n"
+    
+    if bundle.waf:
+        osint_data += f"WAF/CDN DETECTION:\n{json.dumps(bundle.waf, ensure_ascii=False, indent=2)}\n"
 
     print("[*] Запуск AI Swarm (CrewAI)...")
     def step_callback(step):

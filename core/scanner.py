@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from typing import Any, Sequence
 
 from .nuclei_worker import NucleiScanResult, run_nuclei_scan_async
+from .waf_detector import run_waf_check
 from .utils import build_url, extract_host
 
 
@@ -32,6 +33,7 @@ class ScanBundle:
     target: str
     results: list[ScanResult] = field(default_factory=list)
     nuclei: NucleiScanResult | None = None
+    waf: dict[str, Any] | None = None
 
     def to_log_text(self) -> str:
         """Сериализует результаты в единый текстовый лог."""
@@ -48,6 +50,12 @@ class ScanBundle:
             sections.append("")
         if self.nuclei:
             sections.append(self.nuclei.to_log_text())
+        if self.waf and self.waf.get("detected"):
+            sections.append("--- WAF / CDN DETECTION ---")
+            sections.append(f"Обнаружено: {', '.join(self.waf.get('providers', []))}")
+            sections.append("Рекомендации по обходу:")
+            for hint in self.waf.get("hints", []):
+                sections.append(f" - {hint}")
         return "\n".join(sections)
 
     def to_aggregated_dict(self) -> dict[str, Any]:
@@ -76,6 +84,7 @@ class ScanBundle:
             "target": self.target,
             "scanners": scanners,
             "nuclei": nuclei_block,
+            "waf": self.waf,
             "combined_logs": self.to_log_text(),
         }
 
@@ -243,6 +252,10 @@ async def run_parallel_scans(
 
     bundle.results.extend([nmap_r, whatweb_r, subfinder_r, wpscan_r, nikto_r])
     bundle.nuclei = nuclei_r
+    
+    print("[*] WAF detection (WebCheck logic)...")
+    url = build_url(target)
+    bundle.waf = run_waf_check(url)
 
     print("[*] ffuf (быстрый fuzzing, параллельно с dirb)...")
     ffuf_result, dirb_result = await asyncio.gather(

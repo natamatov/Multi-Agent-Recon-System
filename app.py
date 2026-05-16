@@ -128,6 +128,7 @@ def _run_audit(target: str) -> None:
             ("subfinder", "Поиск поддоменов"),
             ("wpscan", "WordPress аудит"),
             ("nikto", "Уязвимости веб-сервера"),
+            ("waf", "Детекция WAF/CDN (WebCheck)"),
         ]
         cols = st.columns(3)
         for i, (tool, desc) in enumerate(scanners_info):
@@ -160,13 +161,18 @@ def _run_audit(target: str) -> None:
                     st.success(f"✅ **{result.tool}** — {lines} строк")
                 else:
                     st.error(f"❌ **{result.tool}** — {result.error_message}")
-
         if bundle.nuclei:
             n = len(bundle.nuclei.findings)
             if bundle.nuclei.success:
                 st.success(f"✅ **nuclei** — {n} находок")
             else:
                 st.warning(f"⚠️ **nuclei** — {bundle.nuclei.error_message}")
+        
+        if bundle.waf:
+            if bundle.waf.get("detected"):
+                st.error(f"🛡️ **WAF/CDN** — Обнаружен ({', '.join(bundle.waf.get('providers', []))})")
+            else:
+                st.success("✅ **WAF/CDN** — Не обнаружен")
 
         # ─── Шаг 2: OSINT ────────────────────────────────────────────────────
         st.write("---")
@@ -207,6 +213,9 @@ def _run_audit(target: str) -> None:
             subs = subfinder_res.stdout.strip().splitlines()
             st.info(f"🔗 Subfinder нашёл {len(subs)} поддоменов")
             osint_data += f"SUBFINDER:\n{subfinder_res.stdout}\n"
+            
+        if bundle.waf:
+            osint_data += f"WAF/CDN DETECTION:\n{json.dumps(bundle.waf, ensure_ascii=False, indent=2)}\n"
 
         # ─── Шаг 3: AI Swarm ─────────────────────────────────────────────────
         st.write("---")

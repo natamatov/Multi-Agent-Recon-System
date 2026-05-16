@@ -52,10 +52,10 @@ class MARSSwarmManager:
             result = crew.kickoff()
 
             # Структурируем результаты для UI
-            parsed_data = task1.output.raw_output if hasattr(task1, 'output') and task1.output else "Нет данных от парсера."
-            cve_data = task2.output.raw_output if hasattr(task2, 'output') and task2.output else "Нет данных об уязвимостях."
-            sigma_playbook = task3.output.raw_output if hasattr(task3, 'output') and task3.output else "Нет данных по защите."
-            osint_result = task4.output.raw_output if hasattr(task4, 'output') and task4.output else "OSINT данные не сгенерированы."
+            parsed_data = task1.output.raw if hasattr(task1, 'output') and task1.output else "Нет данных от парсера."
+            cve_data = task2.output.raw if hasattr(task2, 'output') and task2.output else "Нет данных об уязвимостях."
+            sigma_playbook = task3.output.raw if hasattr(task3, 'output') and task3.output else "Нет данных по защите."
+            osint_result = task4.output.raw if hasattr(task4, 'output') and task4.output else "OSINT данные не сгенерированы."
 
             return {
                 "success": True,
