@@ -1,115 +1,154 @@
-# PentestPlatform — Enterprise Web Security Audit
+<div align="center">
+  <img src="https://img.icons8.com/color/120/000000/security-shield.png" alt="Logo">
+  <h1>M.A.R.S. (Multi-Agent Recon System)</h1>
+  <p><b>Enterprise Web Security Audit Hub powered by AI Swarm (CrewAI)</b></p>
+  
+  <p>
+    <a href="https://python.org/"><img src="https://img.shields.io/badge/Python-3.10+-blue?style=flat-square&logo=python" alt="Python Version"></a>
+    <a href="#"><img src="https://img.shields.io/badge/CrewAI-Swarm-orange?style=flat-square" alt="CrewAI"></a>
+    <a href="#"><img src="https://img.shields.io/badge/Claude-3.5_Sonnet-purple?style=flat-square" alt="Claude API"></a>
+    <a href="#"><img src="https://img.shields.io/badge/Kali_Linux-Supported-black?style=flat-square&logo=linux" alt="Kali Linux"></a>
+    <a href="#"><img src="https://img.shields.io/badge/License-MIT-green?style=flat-square" alt="License"></a>
+  </p>
+</div>
 
-Автоматизированный аудит безопасности веб-ресурсов для **Kali Linux**: параллельное сканирование, верификация CVE через **NVD**, поиск PoC в **SearchSploit**, анализ **Claude** и HTML-отчёт.
+---
 
-> Используйте только на системах, где у вас есть **письменное разрешение** на тестирование.
+**M.A.R.S. (Multi-Agent Recon System)** — это передовая платформа автоматизированного аудита безопасности веб-ресурсов. Платформа запускает параллельные сканеры, собирает OSINT-данные и анализирует поверхность атаки с помощью роя интеллектуальных AI-агентов, обученных на методологиях информационной безопасности (Blue/Red Team).
 
-## Возможности
+> ⚠️ **ПРЕДУПРЕЖДЕНИЕ:** Используйте только на системах, где у вас есть **явное письменное разрешение** на тестирование. Проект создан в образовательных и профессиональных целях защиты (Blue Team).
 
-| Компонент | Описание |
-|-----------|----------|
-| **nmap** | Порты и версии сервисов (`-sV`) |
-| **whatweb** | Fingerprint веб-технологий |
-| **nuclei** | CVE/misconfig шаблоны (`-jsonl`, critical/high/medium) |
-| **dirb** | Перебор директорий (после параллельной фазы) |
-| **NVD API** | Верификация CVE, CVSS, описания |
-| **searchsploit** | Exploit-DB по технологиям |
-| **Claude** | Корреляция Nuclei ↔ CVE, инструкции для разработчиков |
-| **reporter** | Адаптивный HTML с цветовой кодировкой CVSS |
+---
 
-## Архитектура
+## ✨ Ключевые возможности
 
+🚀 **Асинхронное Сканирование**
+- Запускает `nmap`, `whatweb`, `nuclei`, `subfinder` параллельно (через `asyncio.gather`), сводя время ожидания к минимуму.
+- Последовательно выполняет `dirb` для перебора директорий.
+
+🧠 **Multi-Agent Swarm (CrewAI)**
+Вместо одного запроса к ИИ, логи анализирует Рой из узкоспециализированных агентов (на базе Claude 3.5 Sonnet):
+1. **`Parser Agent`**: Вычищает "шум" из логов и нормализует сырые данные.
+2. **`Threat Intel Agent`**: Сопоставляет выявленные версии с CVE, отбрасывая ложные срабатывания (False Positives).
+3. **`SOC Engineer`**: Генерирует Playbook защиты (шаги по патчингу) и **Sigma-правила** для SIEM систем.
+4. **`OSINT Recon Agent`**: Анализирует данные поддоменов и открытые порты, генерируя индивидуальные **Google Dorks** под конкретную цель.
+
+🔍 **Обогащение Данных (Threat Intelligence)**
+- Интеграция с **NVD API 2.0** для получения точного CVSS Score и описаний CVE.
+- Интеграция с **SearchSploit (Exploit-DB)** для поиска PoC.
+- Пассивный OSINT через **Shodan API** (не касается цели напрямую).
+
+📊 **UI и Отчетность**
+- Удобный веб-интерфейс на базе **Streamlit**.
+- Автоматическая генерация профессиональных отчетов: `JSON`, визуальный `HTML` и стильный `PDF` (через `wkhtmltopdf`).
+
+---
+
+## 🛠️ Архитектура
+
+```text
+Multi-Agent-Recon-System
+├── app.py                     # Streamlit Веб-интерфейс
+├── main.py                    # CLI-оркестратор (консольная версия)
+├── requirements.txt           # Python зависимости
+├── tests/                     # Интеграционные тесты (Pytest & Mocks)
+└── core/                      # Ядро бизнес-логики
+    ├── config.py              # Загрузка и валидация .env
+    ├── dependency_manager.py  # Проверка системных утилит (Kali)
+    ├── scanner.py             # Асинхронный запуск Nmap, WhatWeb, Subfinder, Nuclei
+    ├── shodan_client.py       # Клиент Shodan API
+    ├── nvd_client.py          # Клиент NIST NVD API
+    ├── searchsploit_client.py # Интеграция с Exploit-DB
+    ├── reporter.py            # Генерация HTML и PDF отчетов
+    └── swarm/                 # Модуль CrewAI
+        ├── agents.py          # Инициализация ИИ-агентов
+        ├── tasks.py           # Описание задач агентов
+        └── orchestrator.py    # Запуск и управление роем (MARSSwarmManager)
 ```
-main.py
-  ├── config.py              # .env, валидация
-  ├── dependency_manager.py  # nmap, whatweb, dirb, nuclei, searchsploit
-  ├── scanner.py             # asyncio: nmap ∥ whatweb ∥ nuclei → dirb
-  ├── nuclei_worker.py       # nuclei -jsonl
-  ├── nvd_client.py          # NVD REST API 2.0
-  ├── searchsploit_client.py # searchsploit --json
-  ├── ai_analyzer.py         # Anthropic Claude
-  ├── reporter.py            # audit_report.html
-  └── utils.py               # PATH, CVE regex, URL helpers
-```
 
-## Установка (Kali Linux)
+---
+
+## ⚙️ Установка (Kali Linux / Debian)
+
+### 1. Системные зависимости
+
+Скрипт автоматически проверит зависимости при запуске, но лучше установить их заранее:
 
 ```bash
 sudo apt update
-sudo apt install -y nmap whatweb dirb exploitdb
-
-# Nuclei
-go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
-# или: sudo apt install nuclei
-nuclei -update-templates
-
-# Python
-cd PentestPlatform
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-
-cp .env.example .env
-# Заполните CLAUDE_API_KEY и TARGET
+sudo apt install -y nmap whatweb dirb exploitdb subfinder wkhtmltopdf
 ```
 
-## Конфигурация (`.env`)
+Установка [Nuclei](https://github.com/projectdiscovery/nuclei):
+```bash
+go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
+# Или через apt: sudo apt install nuclei
+nuclei -update-templates
+```
+
+### 2. Установка платформы
+
+```bash
+git clone https://github.com/natamatov/Multi-Agent-Recon-System.git
+cd Multi-Agent-Recon-System
+
+# Рекомендуется использовать виртуальное окружение
+python3 -m venv venv
+source venv/bin/activate
+
+# Установка Python-пакетов
+pip install -r requirements.txt
+```
+
+### 3. Конфигурация (.env)
+
+Скопируйте пример конфига и впишите ваши API-ключи:
+
+```bash
+cp .env.example .env
+```
 
 | Переменная | Обязательно | Описание |
 |------------|-------------|----------|
-| `CLAUDE_API_KEY` | Да | Ключ Anthropic |
-| `TARGET` | Да | IP, hostname или URL |
-| `NVD_API_KEY` | Нет | Ключ NVD (выше лимиты запросов) |
+| `CLAUDE_API_KEY` | **Да** | Ключ Anthropic (Claude 3.5 Sonnet) для работы CrewAI агентов. |
+| `TARGET` | Нет | IP, hostname или URL. Можно вводить напрямую в UI/CLI. |
+| `NVD_API_KEY` | Нет | Ключ NIST (повышает лимиты API и скорость обогащения CVE). |
+| `SHODAN_API_KEY` | Нет | Включает пассивный OSINT перед сканированием. |
 
-## Запуск
+---
+
+## 🚀 Использование
+
+### Веб-интерфейс (Streamlit)
+
+Идеально для интерактивного анализа и просмотра результатов по вкладкам (OSINT, CVE, Sigma Rules).
+
+```bash
+streamlit run app.py
+```
+
+### Консольная версия (CLI)
+
+Отлично подходит для автоматизации, CI/CD или запуска на сервере.
 
 ```bash
 python3 main.py
 ```
 
-**Результаты:**
+Отчеты (`audit_report.json`, `audit_report.html`, `audit_report.pdf`) будут сохранены в корневой директории проекта.
 
-- `audit_report.json` — полный машиночитаемый отчёт
-- `audit_report.html` — визуальный отчёт с таблицами CVE, Nuclei и блоком для разработчиков
+---
 
-## Параллельное сканирование
+## 🧪 Тестирование
 
-`nmap`, `whatweb` и `nuclei` запускаются одновременно через `asyncio.gather`, что сокращает общее время ожидания. `dirb` выполняется после них (длительный перебор).
-
-## Nuclei
-
-Команда (формируется в `nuclei_worker.py`):
+Проект покрыт интеграционными тестами с использованием `unittest.mock`, что позволяет проверять работоспособность парсеров, Swarm менеджера и API-клиентов без реальных запросов и расхода токенов:
 
 ```bash
-nuclei -u <TARGET> -jsonl -tags cve,misconfig -severity critical,high,medium -silent
+pytest tests/
 ```
 
-## NVD
+---
 
-CVE извлекаются из логов (regex `CVE-YYYY-NNNNN`) и проверяются через:
+## 📜 Лицензия и ответственность
 
-`https://services.nvd.nist.gov/rest/json/cves/2.0?cveId=...`
-
-Без API-ключа между запросами выдерживается пауза ~6.5 с (лимит NIST).
-
-## SearchSploit
-
-```bash
-searchsploit --json "product version"
-```
-
-Выполняется по находкам Nuclei и по технологиям, определённым Claude.
-
-## Отсутствующие утилиты
-
-Если бинарник не найден в `PATH`, скрипт **не падает**: выводится подсказка `sudo apt install ...` и ожидание `Enter` после ручной установки.
-
-## Требования
-
-- Python 3.10+
-- Kali Linux (или Debian с теми же пакетами)
-- Доступ в интернет (Claude API, NVD, обновления Nuclei templates)
-
-## Лицензия и ответственность
-
-Инструмент предназначен для легального пентеста и обучения. Автор не несёт ответственности за несанкционированное использование.
+Инструмент распространяется под лицензией MIT. Разработчик не несёт ответственности за несанкционированное использование. M.A.R.S. предназначен исключительно для авторизованного аудита безопасности, CTF и образовательных целей.

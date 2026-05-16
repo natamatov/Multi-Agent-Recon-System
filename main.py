@@ -19,6 +19,7 @@ from core.nvd_client import enrich_cves_from_text
 from core.reporter import save_html_report, save_pdf_report
 from core.scanner import ScanBundle, run_parallel_scans
 from core.searchsploit_client import lookup_technologies
+from core.shodan_client import run_shodan_recon
 from core.utils import merge_unique_cves
 from core.swarm.orchestrator import MARSSwarmManager
 
@@ -65,6 +66,7 @@ def build_final_report(
         "parsed_data": swarm_results.get("parsed_data", ""),
         "cve_data": swarm_results.get("cve_data", ""),
         "sigma_playbook": swarm_results.get("sigma_playbook", ""),
+        "osint_dorking": swarm_results.get("osint_dorking", ""),
         "success": swarm_results.get("success", False),
         "error": swarm_results.get("error", "")
     }
@@ -107,12 +109,28 @@ async def _run_audit_async(target: str) -> dict[str, Any]:
         )
     print(f"    [+] SearchSploit: {len(searchsploit_results)} запросов")
 
+    print("[*] Пассивный OSINT (Shodan)...")
+    # Достаем ключ из загруженных настроек
+    from core.config import load_settings
+    curr_settings = load_settings()
+    shodan_res = run_shodan_recon(target, api_key=curr_settings.shodan_api_key)
+    if shodan_res.get("success"):
+        print(f"    [+] Shodan: найдено {len(shodan_res.get('open_ports', []))} портов")
+    else:
+        print(f"    [-] Shodan: {shodan_res.get('error')}")
+
+    osint_data = f"SHODAN: {json.dumps(shodan_res, ensure_ascii=False)}\n\n"
+    # Добавим поддомены из Subfinder к osint_data
+    subfinder_res = next((r for r in bundle.results if r.tool == "subfinder"), None)
+    if subfinder_res and subfinder_res.success:
+        osint_data += f"SUBFINDER:\n{subfinder_res.stdout}\n"
+
     print("[*] Запуск AI Swarm (CrewAI)...")
     def step_callback(step):
         print("  [AI Agent]: Выполняется шаг анализа...")
         
     manager = MARSSwarmManager(step_callback=step_callback)
-    swarm_results = manager.run_analysis(logs)
+    swarm_results = manager.run_analysis(logs, osint_data=osint_data)
     
     if swarm_results.get("success"):
         print("[+] Swarm анализ успешно завершён.")

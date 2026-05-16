@@ -10,7 +10,7 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-from utils import extract_cve_ids
+from .utils import extract_cve_ids
 
 
 NVD_API_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"

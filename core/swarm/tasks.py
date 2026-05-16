@@ -51,3 +51,22 @@ class SecurityTasks:
             expected_output="План митигации (Playbook) и концепты Sigma-правил в формате YAML.",
             agent=agent,
         )
+
+    def osint_recon_task(self, agent, osint_data: str) -> Task:
+        return Task(
+            description=dedent(f"""
+                Изучите следующие пассивные данные (поддомены от Subfinder и результаты Shodan API):
+                
+                Данные OSINT:
+                {osint_data}
+                
+                Выполните:
+                1. Проанализируйте поверхность атаки (какие сервисы и поддомены торчат в интернет).
+                2. Сгенерируйте список из 5-10 точных Google Dorks для поиска утечек, административных 
+                   панелей (напр., WordPress) или уязвимых файлов конфигурации для найденных доменов.
+                
+                Ответ должен быть структурирован в Markdown: профиль цели и список Google Dorks.
+            """),
+            expected_output="Markdown-профиль поверхности атаки и список Google Dorks.",
+            agent=agent,
+        )

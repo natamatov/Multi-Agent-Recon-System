@@ -10,7 +10,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
-from utils import build_url, extract_cve_ids
+from .utils import build_url, extract_cve_ids
 
 
 @dataclass

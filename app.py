@@ -21,6 +21,7 @@ from core.dependency_manager import (
     missing_tools,
 )
 from core.scanner import run_parallel_scans
+from core.shodan_client import run_shodan_recon
 from core.swarm.orchestrator import MARSSwarmManager
 
 
@@ -93,13 +94,25 @@ def _run_audit(target: str) -> None:
         st.session_state.raw_logs = logs
         st.write("✅ Сканирование завершено.")
 
-        st.write("🤖 **Шаг 2/2:** Запуск мультиагентного роя (CrewAI)...")
+        st.write("🤖 **Шаг 2/3:** Пассивный OSINT (Shodan)...")
+        shodan_res = run_shodan_recon(target, api_key=st.session_state.get("shodan_api_key"))
+        if shodan_res.get("success"):
+            st.write(f"✅ Shodan нашел {len(shodan_res.get('open_ports', []))} портов")
+        else:
+            st.write(f"⚠️ Shodan: {shodan_res.get('error')}")
+
+        osint_data = f"SHODAN: {json.dumps(shodan_res, ensure_ascii=False)}\n\n"
+        subfinder_res = next((r for r in bundle.results if r.tool == "subfinder"), None)
+        if subfinder_res and subfinder_res.success:
+            osint_data += f"SUBFINDER:\n{subfinder_res.stdout}\n"
+
+        st.write("🤖 **Шаг 3/3:** Запуск мультиагентного роя (CrewAI)...")
         
         def step_callback(step_info):
             st.write(f"⚙️ Рой агентов выполняет шаг: {getattr(step_info, 'name', 'анализ')}")
 
         manager = MARSSwarmManager(step_callback=step_callback)
-        swarm_results = manager.run_analysis(logs)
+        swarm_results = manager.run_analysis(logs, osint_data=osint_data)
 
         if not swarm_results.get("success"):
             status.update(label="Ошибка AI-анализа", state="error")
@@ -134,6 +147,9 @@ def main() -> None:
             "Ключ Anthropic обязателен для работы роя агентов."
         )
         st.stop()
+        
+    # Store settings in session for run_audit
+    st.session_state.shodan_api_key = settings.shodan_api_key
 
     st.divider()
 
@@ -160,10 +176,11 @@ def main() -> None:
     if res and st.session_state.raw_logs:
         st.divider()
         
-        tab_parsed, tab_cve, tab_sigma, tab_raw = st.tabs([
+        tab_parsed, tab_cve, tab_sigma, tab_osint, tab_raw = st.tabs([
             "Нормализованные данные", 
             "Уязвимости (CVE)", 
             "Sigma Правила & Playbook", 
+            "OSINT & Dorking",
             "Сырые логи сканеров"
         ])
 
@@ -178,6 +195,10 @@ def main() -> None:
         with tab_sigma:
             st.subheader("Защитный Playbook (SOC Engineer Agent)")
             st.markdown(res.get("sigma_playbook", "План защиты не сгенерирован."))
+
+        with tab_osint:
+            st.subheader("Поверхность атаки и Google Dorks (OSINT Agent)")
+            st.markdown(res.get("osint_dorking", "Google Dorks не сгенерированы."))
 
         with tab_raw:
             st.markdown("#### Комбинированный лог сканирования")

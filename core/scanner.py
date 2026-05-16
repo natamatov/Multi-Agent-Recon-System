@@ -9,8 +9,8 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import Any, Sequence
 
-from nuclei_worker import NucleiScanResult, run_nuclei_scan_async
-from utils import build_url, extract_host
+from .nuclei_worker import NucleiScanResult, run_nuclei_scan_async
+from .utils import build_url, extract_host
 
 
 @dataclass
@@ -171,6 +171,12 @@ async def run_dirb_async(target: str, timeout: int = 900) -> ScanResult:
     command = ["dirb", url, wordlist, "-S", "-r"]
     return await _run_command_async("dirb", command, timeout=timeout)
 
+async def run_subfinder_async(target: str, timeout: int = 300) -> ScanResult:
+    """Subfinder: пассивный поиск поддоменов."""
+    host = extract_host(target)
+    command = ["subfinder", "-d", host, "-silent"]
+    return await _run_command_async("subfinder", command, timeout=timeout)
+
 
 async def run_parallel_scans(target: str) -> ScanBundle:
     """
@@ -179,13 +185,14 @@ async def run_parallel_scans(target: str) -> ScanBundle:
     """
     bundle = ScanBundle(target=target)
 
-    nmap_result, whatweb_result, nuclei_result = await asyncio.gather(
+    nmap_result, whatweb_result, nuclei_result, subfinder_result = await asyncio.gather(
         run_nmap_async(target),
         run_whatweb_async(target),
         run_nuclei_scan_async(target),
+        run_subfinder_async(target),
     )
 
-    bundle.results.extend([nmap_result, whatweb_result])
+    bundle.results.extend([nmap_result, whatweb_result, subfinder_result])
     bundle.nuclei = nuclei_result
 
     print("[*] Dirb (последовательно)...")

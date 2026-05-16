@@ -8,8 +8,8 @@ from __future__ import annotations
 import shutil
 from typing import Iterable
 
-# Утилиты пайплайна (включая nuclei, searchsploit, wkhtmltopdf)
-DEFAULT_REQUIRED_TOOLS: tuple[str, ...] = ("nmap", "whatweb", "dirb", "nuclei", "searchsploit", "wkhtmltopdf")
+# Утилиты пайплайна (включая nuclei, searchsploit, wkhtmltopdf, subfinder)
+DEFAULT_REQUIRED_TOOLS: tuple[str, ...] = ("nmap", "whatweb", "dirb", "nuclei", "searchsploit", "wkhtmltopdf", "subfinder")
 
 # Подсказки для apt в Kali/Debian
 _APT_PACKAGES: dict[str, str] = {
@@ -19,6 +19,7 @@ _APT_PACKAGES: dict[str, str] = {
     "nuclei": "nuclei",
     "searchsploit": "exploitdb",
     "wkhtmltopdf": "wkhtmltopdf",
+    "subfinder": "subfinder",
 }
 
 def is_tool_available(tool_name: str) -> bool:

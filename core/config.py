@@ -29,6 +29,7 @@ class Settings:
     """Неизменяемый контейнер проверенных настроек приложения."""
     claude_api_key: str
     target: str | None
+    shodan_api_key: str | None = None
 
 
 def _fail(message: str) -> None:
@@ -115,8 +116,9 @@ def load_settings(env_path: str | None = None) -> Settings:
 
     api_key = _validate_api_key(os.getenv("CLAUDE_API_KEY"))
     target = _validate_target(os.getenv("TARGET"))
+    shodan_key = os.getenv("SHODAN_API_KEY")
 
-    return Settings(claude_api_key=api_key, target=target)
+    return Settings(claude_api_key=api_key, target=target, shodan_api_key=shodan_key)
 
 def try_load_settings(env_path: str | None = None) -> Settings | None:
     """
@@ -142,4 +144,6 @@ def try_load_settings(env_path: str | None = None) -> Settings | None:
         except ValueError:
             target = None # Ignore invalid target in UI, user will type it
             
-    return Settings(claude_api_key=key, target=target)
+    shodan_key = os.getenv("SHODAN_API_KEY")
+            
+    return Settings(claude_api_key=key, target=target, shodan_api_key=shodan_key)
