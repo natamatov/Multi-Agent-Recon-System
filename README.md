@@ -167,7 +167,7 @@ nuclei -update-templates
 cd /opt
 sudo git clone https://github.com/s0md3v/XSStrike.git
 cd XSStrike
-sudo pip3 install -r requirements.txt
+sudo pip3 install -r requirements.txt --break-system-packages
 # После установки убедитесь, что указали правильный путь в .env: XSSTRIKE_PATH=python3 /opt/XSStrike/xsstrike.py
 ```
 
