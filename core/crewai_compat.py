@@ -1,13 +1,15 @@
 """
 Совместимый импорт декоратора @tool для CrewAI.
-Пакет crewai-tools обязателен (ставится через pip install 'crewai[tools]').
+Для crewai 1.x достаточно pip install 'crewai[tools]'.
+Для crewai 0.x дополнительно: pip install crewai-tools
 """
 
 from __future__ import annotations
 
 _INSTALL_HINT = (
     "Установите CrewAI со всеми зависимостями:\n"
-    "  pip install 'crewai[tools]>=0.28.0' crewai-tools"
+    "  pip install -U 'crewai[tools]>=0.28.0'\n"
+    "  # crewai 0.x: pip install crewai-tools"
 )
 
 

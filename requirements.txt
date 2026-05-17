@@ -3,7 +3,7 @@ anthropic>=0.39.0
 streamlit>=1.33.0
 pandas>=2.0.0
 crewai[tools]>=0.28.0
-crewai-tools>=0.14.0
+# crewai-tools: отдельный пакет только для crewai < 1.0; в 1.x tool встроен в crewai.tools
 langchain-anthropic>=0.1.4
 pdfkit>=1.0.0
 pytest>=8.0.0
