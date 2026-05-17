@@ -64,7 +64,7 @@ def build_scanner_plan(nmap_stdout: str, whatweb_stdout: str) -> ScannerPlan:
         )
         return plan
 
-    plan.web = ["nuclei", "nikto", "ffuf", "dirb"]
+    plan.web = ["nuclei", "nikto", "ffuf", "dirb", "xsstrike"]
     for t in plan.web:
         plan.reasons[t] = "обнаружен веб-сервис"
 

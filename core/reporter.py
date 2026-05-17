@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import html
+import markdown
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -167,13 +168,18 @@ def _render_dev_instructions(instructions: list[Any]) -> str:
             title = instr.get("title", f"Шаг {idx}")
             body = instr.get("action", instr.get("description", ""))
             priority = instr.get("priority", "")
+            
+            # Поддержка markdown в теле инструкции
+            parsed_body = markdown.markdown(body, extensions=['extra', 'nl2br']) if body else ""
+            
             items.append(
                 f"<li><strong>{_esc(title)}</strong>"
                 f"{f' <span class=\"badge medium\">{_esc(priority)}</span>' if priority else ''}"
-                f"<p>{_esc(body)}</p></li>"
+                f"<div class='md-content'>{parsed_body}</div></li>"
             )
         else:
-            items.append(f"<li>{_esc(instr)}</li>")
+            parsed_instr = markdown.markdown(str(instr), extensions=['extra', 'nl2br'])
+            items.append(f"<li><div class='md-content'>{parsed_instr}</div></li>")
     return f"<ol class='dev-steps'>{''.join(items)}</ol>"
 
 
@@ -187,7 +193,9 @@ def generate_html_report(report: dict[str, Any]) -> str:
     audit = report.get("audit", {})
     target = audit.get("target", "unknown")
     timestamp = audit.get("timestamp_utc", datetime.utcnow().isoformat())
-    summary = report.get("ai_summary", report.get("summary", ""))
+    summary_raw = report.get("ai_summary", report.get("summary", ""))
+    summary_html = markdown.markdown(summary_raw, extensions=['extra', 'nl2br']) if summary_raw else "<p>Резюме отсутствует.</p>"
+    
     technologies = report.get("technologies", [])
     cves = report.get("cves") or report.get("unified_findings", [])
     cve_diff = report.get("cve_diff")
@@ -200,7 +208,10 @@ def generate_html_report(report: dict[str, Any]) -> str:
         )
     nuclei = report.get("nuclei_findings", [])
     waf = report.get("waf")
-    exploit_data = report.get("exploit_data", "")
+    
+    exploit_data_raw = report.get("exploit_data", "")
+    exploit_data_html = markdown.markdown(exploit_data_raw, extensions=['extra', 'nl2br']) if exploit_data_raw else "<p>Эксплойты не верифицированы.</p>"
+    
     dev_instructions = report.get("developer_instructions", [])
     nvd_count = sum(1 for c in cves if c.get("nvd_verified") or c.get("verified"))
 
@@ -315,6 +326,38 @@ def generate_html_report(report: dict[str, Any]) -> str:
     h3.diff-new-title {{ color: var(--critical); font-size: 1rem; margin: 1rem 0 0.5rem; }}
     h3.diff-resolved-title {{ color: var(--low); font-size: 1rem; margin: 1.25rem 0 0.5rem; }}
     .muted {{ color: var(--muted); font-size: 0.9rem; }}
+    
+    /* Стили для скомпилированного Markdown */
+    .md-content p {{ margin-bottom: 1rem; }}
+    .md-content ul, .md-content ol {{ padding-left: 1.5rem; margin-bottom: 1rem; }}
+    .md-content li {{ margin-bottom: 0.25rem; }}
+    .md-content code {{
+      background: rgba(255,255,255,0.1);
+      padding: 0.2rem 0.4rem;
+      border-radius: 4px;
+      font-family: 'Consolas', monospace;
+      font-size: 0.9em;
+    }}
+    .md-content pre {{
+      background: #11151c;
+      padding: 1rem;
+      border-radius: 8px;
+      overflow-x: auto;
+      margin-bottom: 1rem;
+      border: 1px solid var(--border);
+    }}
+    .md-content pre code {{ background: transparent; padding: 0; }}
+    .md-content h1, .md-content h2, .md-content h3 {{ margin-top: 1.5rem; margin-bottom: 0.75rem; border: none; padding: 0; }}
+    .md-content h1 {{ font-size: 1.5rem; }}
+    .md-content h2 {{ font-size: 1.25rem; }}
+    .md-content h3 {{ font-size: 1.1rem; }}
+    .md-content blockquote {{
+      border-left: 4px solid var(--info);
+      padding-left: 1rem;
+      margin-left: 0;
+      color: var(--muted);
+    }}
+
     @media (max-width: 768px) {{
       table {{ display: block; overflow-x: auto; }}
       th, td {{ min-width: 120px; }}
@@ -336,7 +379,7 @@ def generate_html_report(report: dict[str, Any]) -> str:
 
     <section>
       <h2>Резюме</h2>
-      <p class="summary">{_esc(summary)}</p>
+      <div class="summary md-content">{summary_html}</div>
     </section>
 
     <section>
@@ -379,8 +422,8 @@ def generate_html_report(report: dict[str, Any]) -> str:
 
     <section>
       <h2>Exploit Verification (PoC)</h2>
-      <div style="background: #fdf2f2; padding: 15px; border-left: 5px solid #e02424; border-radius: 4px;">
-        {exploit_data if exploit_data else "<p>Эксплойты не верифицированы.</p>"}
+      <div style="background: #fdf2f2; padding: 15px; border-left: 5px solid #e02424; border-radius: 4px; color: #1a1a1a;">
+        <div class="md-content">{exploit_data_html}</div>
       </div>
     </section>
 

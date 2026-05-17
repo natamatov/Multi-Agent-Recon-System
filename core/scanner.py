@@ -260,6 +260,16 @@ async def run_ffuf_async(target: str, timeout: int = 300) -> ScanResult:
     return await _run_command_async("ffuf", command, timeout=timeout)
 
 
+async def run_xsstrike_async(target: str, timeout: int = 600, xsstrike_path: str = "xsstrike") -> ScanResult:
+    """XSStrike: расширенный поиск XSS."""
+    url = build_url(target)
+    if xsstrike_path.endswith(".py"):
+        command = ["python3", xsstrike_path, "-u", url, "--crawl"]
+    else:
+        command = [xsstrike_path, "-u", url, "--crawl"]
+    return await _run_command_async("xsstrike", command, timeout=timeout)
+
+
 async def run_light_scans(
     target: str,
     *,
@@ -283,6 +293,7 @@ async def run_smart_scans(
     network_interface: str | None = None,
     source_ip: str | None = None,
     http_proxy: str | None = None,
+    xsstrike_path: str = "xsstrike",
 ) -> ScanBundle:
     """
     Умный режим: фаза 1 nmap+whatweb+subfinder, затем веб-сканеры по контексту.
@@ -321,6 +332,9 @@ async def run_smart_scans(
     if "nikto" in plan.web:
         tasks.append(run_nikto_async(target))
         tool_names.append("nikto")
+    if "xsstrike" in plan.web:
+        tasks.append(run_xsstrike_async(target, xsstrike_path=xsstrike_path))
+        tool_names.append("xsstrike")
 
     results = await asyncio.gather(*tasks) if tasks else []
 
@@ -353,22 +367,24 @@ async def run_parallel_scans(
     network_interface: str | None = None,
     source_ip: str | None = None,
     http_proxy: str | None = None,
+    xsstrike_path: str = "xsstrike",
 ) -> ScanBundle:
     """
     Параллельно запускает все сканеры.
     """
     bundle = ScanBundle(target=target)
 
-    nmap_r, whatweb_r, nuclei_r, subfinder_r, wpscan_r, nikto_r = await asyncio.gather(
+    nmap_r, whatweb_r, nuclei_r, subfinder_r, wpscan_r, nikto_r, xsstrike_r = await asyncio.gather(
         run_nmap_async(target, interface=network_interface, source_ip=source_ip),
         run_whatweb_async(target, proxy=http_proxy),
         run_nuclei_scan_async(target),
         run_subfinder_async(target),
         run_wpscan_async(target, api_key=wpscan_api_key),
         run_nikto_async(target),
+        run_xsstrike_async(target, xsstrike_path=xsstrike_path),
     )
 
-    bundle.results.extend([nmap_r, whatweb_r, subfinder_r, wpscan_r, nikto_r])
+    bundle.results.extend([nmap_r, whatweb_r, subfinder_r, wpscan_r, nikto_r, xsstrike_r])
     bundle.nuclei = nuclei_r
     
     print("[*] WAF detection (WebCheck logic)...")

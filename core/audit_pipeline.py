@@ -253,6 +253,7 @@ async def run_audit_async(
                 network_interface=settings.network_interface,
                 source_ip=settings.source_ip,
                 http_proxy=settings.http_proxy,
+                xsstrike_path=settings.xsstrike_path,
             )
             if bundle.scanner_plan:
                 progress(f"План: {', '.join(bundle.scanner_plan.get('web', []) or ['только база'])}")
@@ -264,6 +265,7 @@ async def run_audit_async(
                 network_interface=settings.network_interface,
                 source_ip=settings.source_ip,
                 http_proxy=settings.http_proxy,
+                xsstrike_path=settings.xsstrike_path,
             )
 
         update_progress("Сканирование завершено", cancel.snapshot_pids())

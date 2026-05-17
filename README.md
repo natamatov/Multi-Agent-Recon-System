@@ -34,6 +34,7 @@
 | **subfinder** | Пассивный | Перечисление поддоменов через публичные DNS-источники |
 | **ffuf** | Активный | Быстрый web-fuzzer: скрытые директории и файлы |
 | **dirb** | Активный | Directory bruteforce (параллельно с ffuf) |
+| **xsstrike** | Активный | Поиск и фаззинг XSS-уязвимостей |
 
 ### 🎚️ Режимы аудита (безопасность по умолчанию)
 
@@ -152,13 +153,22 @@ docker compose up --build
 
 ```bash
 sudo apt update
-sudo apt install -y nmap whatweb dirb exploitdb subfinder wkhtmltopdf wpscan nikto ffuf
+sudo apt install -y nmap whatweb dirb exploitdb subfinder wkhtmltopdf wpscan nikto ffuf python3-pip
 ```
 
 Установка [Nuclei](https://github.com/projectdiscovery/nuclei):
 ```bash
 go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
 nuclei -update-templates
+```
+
+Установка [XSStrike](https://github.com/s0md3v/XSStrike) (опционально, нужен для XSS):
+```bash
+cd /opt
+sudo git clone https://github.com/s0md3v/XSStrike.git
+cd XSStrike
+sudo pip3 install -r requirements.txt
+# После установки убедитесь, что указали правильный путь в .env: XSSTRIKE_PATH=python3 /opt/XSStrike/xsstrike.py
 ```
 
 ### 2. Клонирование и установка
@@ -188,6 +198,7 @@ nano .env  # Вставьте ваши ключи
 | `NETWORK_INTERFACE` | Нет | Интерфейс для nmap (eth0, tun0...) | — |
 | `SOURCE_IP` | Нет | Исходящий IP для nmap | — |
 | `HTTP_PROXY` | Нет | Прокси для веб-сканеров (Burp, SOCKS5) | — |
+| `XSSTRIKE_PATH` | Нет | Путь к скрипту xsstrike.py (по умолчанию `xsstrike`) | — |
 
 ---
 

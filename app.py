@@ -134,7 +134,7 @@ def _render_dashboard() -> None:
     df = pd.DataFrame(history)
     st.dataframe(
         df[["audit_id", "target", "timestamp_utc", "profile", "cve_count", "critical_high"]],
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
 
@@ -340,7 +340,7 @@ def main() -> None:
                     st.write(f"**Новые:** {len(diff.get('new', []))} | "
                              f"**Исчезли:** {len(diff.get('resolved', []))}")
                     if diff.get("new"):
-                        st.dataframe(pd.DataFrame(diff["new"]), use_container_width=True)
+                        st.dataframe(pd.DataFrame(diff["new"]), width="stretch")
 
             tabs = st.tabs(["CVE таблица", "NVD", "AI", "Логи"])
             with tabs[0]:
@@ -353,7 +353,7 @@ def main() -> None:
                     )
                     if sev_filter:
                         df = df[df["severity"].isin(sev_filter)]
-                    st.dataframe(df, use_container_width=True, hide_index=True)
+                    st.dataframe(df, width="stretch", hide_index=True)
             with tabs[1]:
                 st.json(report.get("nvd_enrichment", []))
             with tabs[2]:

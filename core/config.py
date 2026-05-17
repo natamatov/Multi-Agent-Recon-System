@@ -37,6 +37,7 @@ class Settings:
     network_interface: str | None = None
     source_ip: str | None = None
     http_proxy: str | None = None
+    xsstrike_path: str = "xsstrike"
     enable_red_team: bool = False
     allow_exploit_execution: bool = False
 
@@ -141,6 +142,7 @@ def load_settings(env_path: str | None = None) -> Settings:
         network_interface=net_iface,
         source_ip=source_ip,
         http_proxy=http_proxy,
+        xsstrike_path=os.getenv("XSSTRIKE_PATH", "xsstrike"),
         enable_red_team=parse_bool_env("ENABLE_RED_TEAM", default=False),
         allow_exploit_execution=parse_bool_env("ALLOW_EXPLOIT_EXECUTION", default=False),
     )
@@ -185,6 +187,7 @@ def try_load_settings(env_path: str | None = None) -> Settings | None:
         network_interface=net_iface,
         source_ip=source_ip,
         http_proxy=http_proxy,
+        xsstrike_path=os.getenv("XSSTRIKE_PATH", "xsstrike"),
         enable_red_team=parse_bool_env("ENABLE_RED_TEAM", default=False),
         allow_exploit_execution=parse_bool_env("ALLOW_EXPLOIT_EXECUTION", default=False),
     )
