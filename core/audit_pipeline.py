@@ -27,10 +27,18 @@ from core.cancel_registry import (
 )
 from core.config import Settings
 from core.light_analyzer import LightClaudeAnalyzer
+from core.log_truncator import truncate_for_ai
 from core.logger import get_logger
 from core.nvd_client import enrich_cves_from_text
 from core.rate_limiter import NVD_LIMITER, SHODAN_LIMITER, VT_LIMITER
-from core.scanner import ScanBundle, run_light_scans, run_parallel_scans
+from core.report_store import (
+    REPORTS_DIR,
+    archive_report,
+    diff_cve_reports,
+    enrich_report_with_unified_findings,
+    find_previous_report,
+)
+from core.scanner import ScanBundle, run_light_scans, run_parallel_scans, run_smart_scans
 from core.searchsploit_client import lookup_technologies
 from core.security_mode import AuditMode, exploit_execution_enabled, mode_from_env, mode_label
 from core.shodan_client import run_shodan_recon
@@ -40,6 +48,7 @@ from core.swarm.orchestrator import MARSSwarmManager
 log = get_logger("mars.pipeline")
 
 ProgressCallback = Callable[[str], None]
+USE_SMART_SCANNERS = os.getenv("USE_SMART_SCANNERS", "true").lower() in ("1", "true", "yes")
 
 
 def _default_progress(msg: str) -> None:
@@ -56,6 +65,7 @@ def build_final_report(
     searchsploit_results: list[dict[str, Any]],
     shodan_res: dict[str, Any] | None = None,
     vt_res: dict[str, Any] | None = None,
+    cve_diff: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Итоговый JSON-отчёт."""
     nuclei_findings: list[dict[str, Any]] = []
@@ -72,14 +82,17 @@ def build_final_report(
             "findings_count": len(bundle.nuclei.findings),
             "error": bundle.nuclei.error_message,
         }
+    if bundle.scanner_plan:
+        scan_summary["_scanner_plan"] = bundle.scanner_plan
 
-    return {
+    report: dict[str, Any] = {
         "audit": {
             "target": target,
             "timestamp_utc": datetime.now(timezone.utc).isoformat(),
             "platform": "M.A.R.S. / Kali Linux",
             "profile": profile.value,
             "profile_label": profile_label(profile),
+            "smart_scanners": USE_SMART_SCANNERS,
         },
         "scan_summary": scan_summary,
         "nuclei_findings": nuclei_findings,
@@ -104,11 +117,13 @@ def build_final_report(
         "ai_engine": ai_results.get("ai_engine", "crewai_swarm"),
         "success": ai_results.get("success", False),
         "error": ai_results.get("error"),
+        "cve_diff": cve_diff,
     }
+    return enrich_report_with_unified_findings(report)
 
 
 def _run_nvd(logs: str, api_key: str | None, on_progress: ProgressCallback) -> list[dict[str, Any]]:
-    on_progress("NVD: верификация CVE (очередь rate-limit)...")
+    on_progress("NVD: верификация CVE (кэш + rate-limit)...")
     ensure_not_cancelled()
 
     def _do() -> list[dict[str, Any]]:
@@ -138,21 +153,31 @@ def _run_osint(
     settings: Settings,
     on_progress: ProgressCallback,
 ) -> tuple[dict[str, Any], dict[str, Any], str]:
-    on_progress("OSINT: Shodan (очередь)...")
-    ensure_not_cancelled()
+    shodan_res: dict[str, Any] = {"success": False, "error": "ключ не задан"}
+    vt_res: dict[str, Any] = {"success": False, "error": "ключ не задан"}
+    osint_data = ""
 
-    def shodan_call() -> dict[str, Any]:
-        return run_shodan_recon(target, api_key=settings.shodan_api_key)
+    if settings.shodan_api_key:
+        on_progress("OSINT: Shodan (очередь)...")
+        ensure_not_cancelled()
 
-    shodan_res = SHODAN_LIMITER.call(shodan_call, is_cancelled=is_audit_cancelled)
+        def shodan_call() -> dict[str, Any]:
+            return run_shodan_recon(target, api_key=settings.shodan_api_key)
 
-    on_progress("OSINT: VirusTotal (очередь)...")
-    ensure_not_cancelled()
+        shodan_res = SHODAN_LIMITER.call(shodan_call, is_cancelled=is_audit_cancelled)
+    else:
+        on_progress("OSINT: Shodan пропущен (нет SHODAN_API_KEY)")
 
-    def vt_call() -> dict[str, Any]:
-        return run_virustotal_recon(target, api_key=settings.virustotal_api_key)
+    if settings.virustotal_api_key:
+        on_progress("OSINT: VirusTotal (очередь)...")
+        ensure_not_cancelled()
 
-    vt_res = VT_LIMITER.call(vt_call, is_cancelled=is_audit_cancelled)
+        def vt_call() -> dict[str, Any]:
+            return run_virustotal_recon(target, api_key=settings.virustotal_api_key)
+
+        vt_res = VT_LIMITER.call(vt_call, is_cancelled=is_audit_cancelled)
+    else:
+        on_progress("OSINT: VirusTotal пропущен (нет VIRUSTOTAL_API_KEY)")
 
     osint_data = f"SHODAN: {json.dumps(shodan_res, ensure_ascii=False)}\n\n"
     osint_data += f"VIRUSTOTAL: {json.dumps(vt_res, ensure_ascii=False)}\n\n"
@@ -181,12 +206,13 @@ def _run_ai_swarm(
 ) -> dict[str, Any]:
     on_progress(f"AI Swarm (CrewAI): {mode_label(mode)}...")
     ensure_not_cancelled()
+    truncated = truncate_for_ai(logs)
     if exploit_execution_enabled(mode):
         os.environ["ALLOW_EXPLOIT_EXECUTION"] = "true"
     else:
         os.environ["ALLOW_EXPLOIT_EXECUTION"] = "false"
     manager = MARSSwarmManager(step_callback=step_callback, mode=mode)
-    return manager.run_analysis(logs, osint_data=osint_data)
+    return manager.run_analysis(truncated, osint_data=osint_data)
 
 
 async def run_audit_async(
@@ -198,9 +224,7 @@ async def run_audit_async(
     on_progress: ProgressCallback | None = None,
     step_callback: Callable[..., None] | None = None,
 ) -> dict[str, Any]:
-    """
-    Полный цикл аудита. Бросает AuditCancelledError при отмене.
-    """
+    """Полный цикл аудита. Бросает AuditCancelledError при отмене."""
     progress = on_progress or _default_progress
     cancel = AuditCancellation.get()
     cancel.reset()
@@ -210,7 +234,7 @@ async def run_audit_async(
     nvd_key = os.getenv("NVD_API_KEY")
 
     try:
-        progress("Проверка отмены / подготовка...")
+        progress("Подготовка...")
         ensure_not_cancelled()
 
         if profile == AuditProfile.LIGHT:
@@ -221,8 +245,19 @@ async def run_audit_async(
                 source_ip=settings.source_ip,
                 http_proxy=settings.http_proxy,
             )
+        elif USE_SMART_SCANNERS:
+            progress("Сканирование: умный выбор сканеров...")
+            bundle = await run_smart_scans(
+                target,
+                wpscan_api_key=settings.wpscan_api_key,
+                network_interface=settings.network_interface,
+                source_ip=settings.source_ip,
+                http_proxy=settings.http_proxy,
+            )
+            if bundle.scanner_plan:
+                progress(f"План: {', '.join(bundle.scanner_plan.get('web', []) or ['только база'])}")
         else:
-            progress("Сканирование: параллельный запуск всех сканеров...")
+            progress("Сканирование: полный параллельный набор...")
             bundle = await run_parallel_scans(
                 target,
                 wpscan_api_key=settings.wpscan_api_key,
@@ -257,6 +292,22 @@ async def run_audit_async(
         else:
             ai_results = _run_ai_swarm(logs, osint_data, mode, progress, step_callback)
 
+        prev = find_previous_report(target)
+        cve_diff = None
+        if prev:
+            progress("Сравнение с предыдущим аудитом...")
+            draft = build_final_report(
+                target,
+                bundle,
+                ai_results,
+                profile=profile,
+                nvd_records=nvd_records,
+                searchsploit_results=searchsploit_results,
+                shodan_res=shodan_res,
+                vt_res=vt_res,
+            )
+            cve_diff = diff_cve_reports(prev, draft)
+
         report = build_final_report(
             target,
             bundle,
@@ -266,6 +317,7 @@ async def run_audit_async(
             searchsploit_results=searchsploit_results,
             shodan_res=shodan_res,
             vt_res=vt_res,
+            cve_diff=cve_diff,
         )
         mark_completed("Аудит завершён", report_ready=True)
         log.info("Аудит завершён: target=%s profile=%s", target, profile.value)
@@ -282,7 +334,7 @@ async def run_audit_async(
 
 
 def save_reports(report: dict[str, Any], base_dir: Path | None = None) -> dict[str, str]:
-    """Сохраняет JSON, HTML, PDF в каталог проекта."""
+    """Сохраняет JSON, HTML, PDF и архивирует в reports/."""
     from core.reporter import save_html_report, save_pdf_report
 
     base = base_dir or Path(__file__).resolve().parent.parent
@@ -299,5 +351,9 @@ def save_reports(report: dict[str, Any], base_dir: Path | None = None) -> dict[s
     pdf_path = base / "audit_report.pdf"
     save_pdf_report(report, str(pdf_path))
     paths["pdf"] = str(pdf_path)
+
+    aid = archive_report(report, paths)
+    paths["audit_id"] = aid
+    paths["archive_dir"] = str(REPORTS_DIR / aid)
 
     return paths

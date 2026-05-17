@@ -23,6 +23,7 @@ audit_report.json
 audit_report.html
 audit_report.pdf
 logs/
+reports/
 
 # IDE / OS
 .idea/

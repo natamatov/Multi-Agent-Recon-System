@@ -55,17 +55,66 @@ def _render_cve_rows(cves: list[dict[str, Any]]) -> str:
     return "\n".join(rows) if rows else "<tr><td colspan='6'>CVE не обнаружены</td></tr>"
 
 
-def _render_tech_rows(technologies: list[dict[str, Any]]) -> str:
+def _render_tech_rows(technologies: list[Any]) -> str:
     rows: list[str] = []
     for tech in technologies:
-        rows.append(
-            "<tr>"
-            f"<td>{_esc(tech.get('name', ''))}</td>"
-            f"<td>{_esc(tech.get('version', '—'))}</td>"
-            f"<td>{_esc(tech.get('evidence', ''))}</td>"
-            "</tr>"
-        )
+        if isinstance(tech, str):
+            rows.append(f"<tr><td colspan='3'>{_esc(tech)}</td></tr>")
+            continue
+        if isinstance(tech, dict):
+            rows.append(
+                "<tr>"
+                f"<td>{_esc(tech.get('name', ''))}</td>"
+                f"<td>{_esc(tech.get('version', '—'))}</td>"
+                f"<td>{_esc(tech.get('evidence', ''))}</td>"
+                "</tr>"
+            )
     return "\n".join(rows) if rows else "<tr><td colspan='3'>—</td></tr>"
+
+
+def _render_diff_cve_table(items: list[dict[str, Any]], empty_msg: str) -> str:
+    if not items:
+        return f"<p class='muted'>{_esc(empty_msg)}</p>"
+    rows: list[str] = []
+    for cve in items:
+        sev = cve.get("severity", "unknown")
+        css = _severity_class(sev, cve.get("cvss_score"))
+        rows.append(
+            f"<tr class='{css}'>"
+            f"<td><span class='badge {css}'>{_esc(cve.get('id', 'N/A'))}</span></td>"
+            f"<td><span class='badge {css}'>{_esc(sev)}</span></td>"
+            f"<td>{_esc(cve.get('description', '')[:200])}</td>"
+            f"</tr>"
+        )
+    return (
+        "<table><thead><tr><th>CVE</th><th>Severity</th><th>Описание</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table>"
+    )
+
+
+def _render_diff_section(cve_diff: dict[str, Any] | None) -> str:
+    """HTML-блок сравнения с предыдущим аудитом."""
+    if not cve_diff:
+        return ""
+
+    new_items = cve_diff.get("new", [])
+    resolved_items = cve_diff.get("resolved", [])
+    unchanged_count = len(cve_diff.get("unchanged", []))
+
+    return f"""
+    <section class="diff-section">
+      <h2>Сравнение с предыдущим аудитом</h2>
+      <div class="diff-stats">
+        <div class="stat diff-new"><div class="num">{len(new_items)}</div>Новых CVE</div>
+        <div class="stat diff-resolved"><div class="num">{len(resolved_items)}</div>Исчезло</div>
+        <div class="stat"><div class="num">{unchanged_count}</div>Без изменений</div>
+      </div>
+      <h3 class="diff-new-title">Новые уязвимости</h3>
+      {_render_diff_cve_table(new_items, "Новых CVE не обнаружено")}
+      <h3 class="diff-resolved-title">Устранённые (больше не видны)</h3>
+      {_render_diff_cve_table(resolved_items, "Исчезнувших CVE нет")}
+    </section>
+    """
 
 
 def _render_nuclei_rows(findings: list[dict[str, Any]]) -> str:
@@ -140,7 +189,15 @@ def generate_html_report(report: dict[str, Any]) -> str:
     timestamp = audit.get("timestamp_utc", datetime.utcnow().isoformat())
     summary = report.get("ai_summary", report.get("summary", ""))
     technologies = report.get("technologies", [])
-    cves = report.get("cves", [])
+    cves = report.get("cves") or report.get("unified_findings", [])
+    cve_diff = report.get("cve_diff")
+    diff_html = _render_diff_section(cve_diff)
+    diff_meta = ""
+    if cve_diff:
+        diff_meta = (
+            f" · Diff: +{len(cve_diff.get('new', []))}"
+            f" / −{len(cve_diff.get('resolved', []))}"
+        )
     nuclei = report.get("nuclei_findings", [])
     waf = report.get("waf")
     exploit_data = report.get("exploit_data", "")
@@ -244,6 +301,20 @@ def generate_html_report(report: dict[str, Any]) -> str:
     .dev-steps {{ padding-left: 1.5rem; }}
     .dev-steps li {{ margin-bottom: 1rem; }}
     .dev-steps p {{ color: var(--muted); margin-top: 0.25rem; }}
+    .diff-section {{ border-color: var(--border); }}
+    .diff-stats {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 1rem;
+      margin-bottom: 1rem;
+    }}
+    .stat.diff-new {{ border-color: var(--critical); }}
+    .stat.diff-new .num {{ color: var(--critical); }}
+    .stat.diff-resolved {{ border-color: var(--low); }}
+    .stat.diff-resolved .num {{ color: var(--low); }}
+    h3.diff-new-title {{ color: var(--critical); font-size: 1rem; margin: 1rem 0 0.5rem; }}
+    h3.diff-resolved-title {{ color: var(--low); font-size: 1rem; margin: 1.25rem 0 0.5rem; }}
+    .muted {{ color: var(--muted); font-size: 0.9rem; }}
     @media (max-width: 768px) {{
       table {{ display: block; overflow-x: auto; }}
       th, td {{ min-width: 120px; }}
@@ -254,7 +325,7 @@ def generate_html_report(report: dict[str, Any]) -> str:
   <div class="container">
     <header>
       <h1>Отчёт аудита безопасности</h1>
-      <p class="meta">Цель: <strong>{_esc(target)}</strong> · {_esc(timestamp)} UTC</p>
+      <p class="meta">Цель: <strong>{_esc(target)}</strong> · {_esc(timestamp)} UTC{_esc(diff_meta)}</p>
       <div class="stats">
         <div class="stat"><div class="num">{len(technologies)}</div>Технологий</div>
         <div class="stat"><div class="num">{len(cves)}</div>CVE</div>
@@ -280,6 +351,8 @@ def generate_html_report(report: dict[str, Any]) -> str:
         <tbody>{_render_cve_rows(cves)}</tbody>
       </table>
     </section>
+
+    {diff_html}
 
     <section>
       <h2>Технологии</h2>

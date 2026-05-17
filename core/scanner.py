@@ -37,6 +37,7 @@ class ScanBundle:
     results: list[ScanResult] = field(default_factory=list)
     nuclei: NucleiScanResult | None = None
     waf: dict[str, Any] | None = None
+    scanner_plan: dict[str, Any] | None = None
 
     def to_log_text(self) -> str:
         """Сериализует результаты в единый текстовый лог."""
@@ -273,6 +274,76 @@ async def run_light_scans(
         run_whatweb_async(target, proxy=http_proxy),
     )
     bundle.results.extend([nmap_r, whatweb_r])
+    return bundle
+
+
+async def run_smart_scans(
+    target: str,
+    wpscan_api_key: str | None = None,
+    network_interface: str | None = None,
+    source_ip: str | None = None,
+    http_proxy: str | None = None,
+) -> ScanBundle:
+    """
+    Умный режим: фаза 1 nmap+whatweb+subfinder, затем веб-сканеры по контексту.
+    """
+    from core.scanner_selector import build_scanner_plan
+
+    bundle = ScanBundle(target=target)
+
+    nmap_r, whatweb_r, subfinder_r = await asyncio.gather(
+        run_nmap_async(target, interface=network_interface, source_ip=source_ip),
+        run_whatweb_async(target, proxy=http_proxy),
+        run_subfinder_async(target),
+    )
+    bundle.results.extend([nmap_r, whatweb_r, subfinder_r])
+
+    plan = build_scanner_plan(nmap_r.stdout, whatweb_r.stdout)
+    bundle.scanner_plan = {
+        "tools": plan.all_tools(),
+        "web": plan.web,
+        "reasons": plan.reasons,
+    }
+
+    if not plan.web:
+        url = build_url(target)
+        bundle.waf = run_waf_check(url)
+        return bundle
+
+    tasks: list[Any] = []
+    tool_names: list[str] = []
+    if "nuclei" in plan.web:
+        tasks.append(run_nuclei_scan_async(target))
+        tool_names.append("nuclei")
+    if "wpscan" in plan.web:
+        tasks.append(run_wpscan_async(target, api_key=wpscan_api_key))
+        tool_names.append("wpscan")
+    if "nikto" in plan.web:
+        tasks.append(run_nikto_async(target))
+        tool_names.append("nikto")
+
+    results = await asyncio.gather(*tasks) if tasks else []
+
+    idx = 0
+    for name in tool_names:
+        if name == "nuclei":
+            bundle.nuclei = results[idx]
+            idx += 1
+        else:
+            bundle.results.append(results[idx])
+            idx += 1
+
+    if "ffuf" in plan.web or "dirb" in plan.web:
+        phase2 = []
+        if "ffuf" in plan.web:
+            phase2.append(run_ffuf_async(target))
+        if "dirb" in plan.web:
+            phase2.append(run_dirb_async(target))
+        extra = await asyncio.gather(*phase2)
+        bundle.results.extend(extra)
+
+    url = build_url(target)
+    bundle.waf = run_waf_check(url)
     return bundle
 
 

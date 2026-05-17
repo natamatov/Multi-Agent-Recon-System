@@ -105,10 +105,26 @@ Parser → Threat Intel → [Red Team*] → SOC Engineer → OSINT Recon
 ### 📊 Отчётность (CLI = Streamlit)
 
 - **NVD** + **SearchSploit** в обоих интерфейсах
-- Экспорт **JSON / HTML / PDF** (кнопки загрузки в Streamlit)
+- Экспорт **JSON / HTML / PDF / CSV** (кнопки загрузки в Streamlit)
+- **История аудитов** в `reports/` + **diff CVE** с прошлым прогоном
+- **Unified findings** — единая таблица CVE (NVD + Nuclei + AI)
+- **Умные сканеры** (`USE_SMART_SCANNERS=true`) — пропуск веб-инструментов без HTTP
+- **Scope guardrails** — ticket ID, allowlist, блок private IP
+- **Dashboard** — метрики и история в UI
+- **Live progress** — авто-обновление каждые 5 с + хвост лога
+- **NVD cache** 24ч в `logs/cache/nvd/`
+- **Усечение логов** перед CrewAI (экономия токенов)
 - Логи: `logs/mars_audit.log`
-- **Остановка аудита** и статус после обновления страницы (`logs/mars_audit_state.json`)
-- Rate-limit очередь для NVD / Shodan / VirusTotal
+- **Docker:** `docker compose up --build`
+
+### 🐳 Docker
+
+```bash
+cp .env.example .env
+docker compose up --build
+# UI: http://localhost:8501
+# Health: страница Health в Streamlit multipage
+```
 
 ---
 

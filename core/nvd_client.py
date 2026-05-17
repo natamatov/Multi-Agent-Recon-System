@@ -10,6 +10,7 @@ import urllib.request
 from typing import Any
 
 from core.cancel_registry import AuditCancelledError, is_audit_cancelled
+from core.nvd_cache import get_cached, set_cached
 from core.rate_limiter import NVD_LIMITER
 
 from .utils import extract_cve_ids
@@ -100,10 +101,15 @@ def enrich_cves_from_text(
         if is_audit_cancelled():
             raise AuditCancelledError("NVD: аудит отменён")
 
-        def _fetch_one(cid: str = cve_id) -> dict[str, Any] | None:
-            return _fetch_cve(cid, api_key=api_key)
+        cached = get_cached(cve_id)
+        if cached is not None:
+            record = cached
+        else:
+            def _fetch_one(cid: str = cve_id) -> dict[str, Any] | None:
+                return _fetch_cve(cid, api_key=api_key)
 
-        record = NVD_LIMITER.call(_fetch_one, is_cancelled=is_audit_cancelled)
+            record = NVD_LIMITER.call(_fetch_one, is_cancelled=is_audit_cancelled)
+            set_cached(cve_id, record)
         if record:
             enriched.append(record)
         else:

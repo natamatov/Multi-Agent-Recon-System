@@ -1,0 +1,18 @@
+services:
+  mars-ui:
+    build: .
+    container_name: mars-security-hub
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    volumes:
+      - ./reports:/app/reports
+      - ./logs:/app/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import sys; from core.healthcheck import run_healthcheck; sys.exit(0 if run_healthcheck()['status']=='ok' else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s

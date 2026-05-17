@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-M.A.R.S. — Streamlit UI (единый пайплайн, отмена, экспорт отчётов).
+M.A.R.S. — Streamlit UI: dashboard, live progress, scope, экспорт.
 """
 
 from __future__ import annotations
@@ -8,33 +8,29 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+from datetime import datetime
 from pathlib import Path
 
+import pandas as pd
 import streamlit as st
 
 from core.audit_pipeline import run_audit_async, save_reports
 from core.audit_profile import AuditProfile, profile_label
-from core.audit_state import (
-    is_still_running,
-    load_state,
-    mark_idle,
-)
+from core.audit_state import is_still_running, load_state, mark_cancelled
 from core.cancel_registry import AuditCancellation
 from core.config import try_load_settings
 from core.dependency_manager import _APT_PACKAGES, check_tools, missing_tools
-from core.logger import setup_logging, get_logger
-from core.security_mode import (
-    AuditMode,
-    exploit_execution_enabled,
-    mode_label,
-    red_team_enabled,
-    resolve_mode,
-)
+from core.export_csv import findings_to_csv
+from core.logger import LOG_FILE, setup_logging, get_logger
+from core.report_store import list_recent_audits, load_archived_report
+from core.scope_guard import validate_scope
+from core.security_mode import AuditMode, mode_label, red_team_enabled, resolve_mode
 
 setup_logging()
 log = get_logger("mars.ui")
 
 REPORT_JSON = Path("audit_report.json")
+APP_TITLE = "M.A.R.S. — Multi-Agent Recon System"
 
 st.set_page_config(
     page_title="M.A.R.S. Security Assessment Hub",
@@ -43,27 +39,26 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-APP_TITLE = "M.A.R.S. — Multi-Agent Recon System"
-
 
 def _init_session() -> None:
     defaults = {
         "tool_status": check_tools(),
         "audit_result": None,
         "raw_logs": None,
-        "ping_result": None,
         "audit_mode": AuditMode.ASSESSMENT.value,
         "audit_profile": AuditProfile.FULL.value,
         "pentest_authorized": False,
         "audit_thread": None,
         "last_report_paths": None,
+        "scope_ticket": "",
+        "_dash_last_status": None,
     }
     for key, val in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = val
 
 
-def _load_report_from_disk() -> dict | None:
+def _load_report() -> dict | None:
     if REPORT_JSON.exists():
         try:
             return json.loads(REPORT_JSON.read_text(encoding="utf-8"))
@@ -72,26 +67,78 @@ def _load_report_from_disk() -> dict | None:
     return None
 
 
-def _render_running_banner() -> None:
+@st.fragment(run_every=5)
+def _live_audit_panel() -> None:
+    """Авто-обновление каждые 5 с при running."""
     state = load_state()
-    if not is_still_running() and state.status != "running":
+    running = is_still_running() or (
+        st.session_state.get("audit_thread") is not None
+        and st.session_state.audit_thread.is_alive()
+    )
+    if not running:
         return
 
-    st.warning(
-        f"⏳ **Аудит выполняется** — цель: `{state.target}` | "
-        f"{state.message or '...'}"
-    )
+    st.warning(f"⏳ **Аудит:** `{state.target}` — {state.message or '...'}")
     if state.child_pids:
-        st.caption(f"Дочерние PID: {', '.join(map(str, state.child_pids))}")
+        st.caption(f"PID: {', '.join(map(str, state.child_pids))}")
 
-    if st.button("🛑 Остановить аудит", type="primary", key="stop_audit"):
-        from core.audit_state import mark_cancelled
+    if LOG_FILE.exists():
+        tail = LOG_FILE.read_text(encoding="utf-8", errors="replace").splitlines()[-15:]
+        with st.expander("Хвост лога (mars_audit.log)"):
+            st.code("\n".join(tail), language="text")
 
+    if st.button("🛑 Остановить", type="primary", key="stop_live"):
         killed = AuditCancellation.get().request_cancel()
-        mark_cancelled(f"Остановлено пользователем (PID: {len(killed)})")
+        mark_cancelled(f"Остановлено (PID: {len(killed)})")
         st.session_state.audit_thread = None
-        st.error(f"Отмена запрошена. Завершено процессов: {len(killed)}")
         st.rerun()
+
+
+@st.fragment(run_every=30)
+def _dashboard_panel() -> None:
+    """Авто-обновление истории каждые 30 с."""
+    _sync_results()
+    state = load_state()
+    thread = st.session_state.get("audit_thread")
+    running = is_still_running() or (thread is not None and thread.is_alive())
+    current = "running" if running else state.status
+    prev = st.session_state.get("_dash_last_status")
+    if prev == "running" and current == "completed":
+        st.toast("Аудит завершён — отчёт обновлён", icon="✅")
+    st.session_state._dash_last_status = current
+
+    st.caption(f"Авто-обновление · {datetime.now().strftime('%H:%M:%S')}")
+    _render_dashboard()
+
+
+def _render_dashboard() -> None:
+    st.subheader("📊 Dashboard")
+    history = list_recent_audits(8)
+    if not history:
+        st.info("История пуста. Запустите первый аудит.")
+        return
+
+    cols = st.columns(4)
+    total_cve = sum(h.get("cve_count", 0) for h in history)
+    total_ch = sum(h.get("critical_high", 0) for h in history)
+    cols[0].metric("Аудитов в истории", len(history))
+    cols[1].metric("CVE (последние)", history[0].get("cve_count", 0))
+    cols[2].metric("Critical+High (последний)", history[0].get("critical_high", 0))
+    cols[3].metric("Σ CVE", total_cve)
+
+    df = pd.DataFrame(history)
+    st.dataframe(
+        df[["audit_id", "target", "timestamp_utc", "profile", "cve_count", "critical_high"]],
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    aid = st.selectbox("Открыть архивный отчёт", [h["audit_id"] for h in history])
+    if st.button("Загрузить выбранный"):
+        archived = load_archived_report(aid)
+        if archived:
+            st.session_state["_view_archived"] = archived
+            st.success(f"Загружен {aid}")
 
 
 def _audit_thread_target(
@@ -100,7 +147,6 @@ def _audit_thread_target(
     profile: AuditProfile,
     mode: AuditMode,
 ) -> None:
-    """Фоновый поток: результат только в audit_report.* и audit_state.json."""
     try:
         report = asyncio.run(
             run_audit_async(
@@ -116,51 +162,10 @@ def _audit_thread_target(
             encoding="utf-8",
         )
     except Exception:
-        log.exception("Ошибка в потоке аудита")
+        log.exception("Ошибка аудита")
 
 
-def _start_audit_background(
-    target: str,
-    settings,
-    profile: AuditProfile,
-    mode: AuditMode,
-) -> None:
-    if st.session_state.audit_thread and st.session_state.audit_thread.is_alive():
-        st.warning("Аудит уже выполняется.")
-        return
-
-    st.session_state.audit_result = None
-    st.session_state.raw_logs = None
-
-    thread = threading.Thread(
-        target=_audit_thread_target,
-        args=(target, settings, profile, mode),
-        daemon=True,
-        name="mars-audit",
-    )
-    st.session_state.audit_thread = thread
-    thread.start()
-    st.info("Аудит запущен в фоне. Можно обновить страницу — статус сохранится.")
-    st.rerun()
-
-
-def _report_to_ui(report: dict) -> None:
-    st.session_state.audit_result = {
-        "parsed_data": report.get("parsed_data", ""),
-        "cve_data": report.get("cve_data", ""),
-        "exploit_data": report.get("exploit_data", ""),
-        "sigma_playbook": report.get("sigma_playbook", ""),
-        "osint_dorking": report.get("osint_dorking", ""),
-        "audit_mode_label": report.get("audit_mode_label", ""),
-        "red_team_enabled": report.get("red_team_enabled", False),
-        "exploit_execution_enabled": report.get("exploit_execution_enabled", False),
-        "success": report.get("success", True),
-    }
-    st.session_state.raw_logs = report.get("raw_scan_logs", "")
-
-
-def _sync_thread_results() -> None:
-    """Подхватывает результат после обновления страницы (файлы на диске)."""
+def _sync_results() -> None:
     paths_file = Path("logs/mars_report_paths.json")
     if paths_file.exists():
         try:
@@ -169,230 +174,189 @@ def _sync_thread_results() -> None:
             )
         except json.JSONDecodeError:
             pass
-
     thread = st.session_state.get("audit_thread")
     if thread is not None and not thread.is_alive():
         st.session_state.audit_thread = None
-
     state = load_state()
     if state.status in ("completed", "error", "cancelled"):
-        report = _load_report_from_disk()
+        report = _load_report()
         if report and not st.session_state.audit_result:
-            _report_to_ui(report)
+            st.session_state.audit_result = report
+            st.session_state.raw_logs = report.get("raw_scan_logs", "")
 
 
-def _render_sidebar_deps() -> bool:
+def _sidebar_deps() -> bool:
     st.sidebar.header("🔧 Зависимости")
     status = st.session_state.tool_status
     missing = missing_tools(status)
-
-    if not missing:
-        st.sidebar.success("✅ Все утилиты доступны")
-    else:
-        st.sidebar.warning("⚠️ Не хватает утилит")
-        with st.sidebar.expander("Установка", expanded=True):
-            for tool in missing:
-                pkg = _APT_PACKAGES.get(tool, tool)
-                st.code(f"sudo apt install {pkg}", language="bash")
-        if st.sidebar.button("🔄 Проверить снова"):
+    if missing:
+        for tool in missing:
+            st.sidebar.code(f"sudo apt install {_APT_PACKAGES.get(tool, tool)}", language="bash")
+        if st.sidebar.button("🔄 Проверить"):
             st.session_state.tool_status = check_tools()
             st.rerun()
         return False
-
-    if st.sidebar.button("🔄 Обновить статус"):
-        st.session_state.tool_status = check_tools()
-        st.rerun()
+    st.sidebar.success("✅ OK")
     return True
-
-
-def _render_profile_sidebar() -> AuditProfile:
-    st.sidebar.divider()
-    st.sidebar.subheader("📋 Профиль сканирования")
-    opts = {
-        AuditProfile.LIGHT.value: "⚡ Лёгкий (nmap + whatweb + Claude)",
-        AuditProfile.FULL.value: "🔬 Полный (все сканеры + Swarm)",
-    }
-    sel = st.sidebar.radio(
-        "Профиль",
-        list(opts.keys()),
-        format_func=lambda k: opts[k],
-        index=0 if st.session_state.audit_profile == AuditProfile.LIGHT.value else 1,
-    )
-    st.session_state.audit_profile = sel
-    return AuditProfile(sel)
-
-
-def _render_audit_mode_sidebar(settings) -> AuditMode:
-    st.sidebar.divider()
-    st.sidebar.subheader("🎚️ Режим AI (CrewAI)")
-    if st.session_state.audit_profile == AuditProfile.LIGHT.value:
-        st.sidebar.info("В лёгком профиле используется один вызов Claude (без Swarm).")
-        return AuditMode.ASSESSMENT
-
-    mode_options = {
-        AuditMode.ASSESSMENT.value: "🛡️ VA (Red Team выкл.)",
-        AuditMode.PENTEST_POC.value: "🔬 Pentest — PoC Analysis",
-        AuditMode.PENTEST_EXPLOIT.value: "⚠️ Exploit Verification",
-    }
-    selected = st.sidebar.radio(
-        "Режим",
-        list(mode_options.keys()),
-        format_func=lambda k: mode_options[k],
-    )
-    ui_confirmed = False
-    if selected == AuditMode.PENTEST_EXPLOIT.value:
-        st.session_state.pentest_authorized = st.sidebar.checkbox(
-            "Письменное разрешение на тестирование",
-            value=st.session_state.pentest_authorized,
-        )
-        confirm = st.sidebar.text_input("Повторите TARGET", key="pentest_confirm")
-        st.session_state.pentest_confirm_target = confirm.strip()
-        ui_confirmed = st.session_state.pentest_authorized and bool(confirm.strip())
-    elif selected == AuditMode.PENTEST_POC.value:
-        st.session_state.pentest_authorized = st.sidebar.checkbox(
-            "Авторизованный пентест",
-            value=st.session_state.pentest_authorized,
-        )
-        ui_confirmed = st.session_state.pentest_authorized
-    else:
-        st.session_state.pentest_authorized = False
-
-    mode = resolve_mode(
-        selected,
-        env_enable_red_team=settings.enable_red_team,
-        env_allow_execution=settings.allow_exploit_execution,
-        ui_confirmed_execution=ui_confirmed,
-    )
-    st.sidebar.caption(f"Активно: **{mode_label(mode)}**")
-    return mode
-
-
-def _render_export_buttons() -> None:
-    st.subheader("📥 Экспорт отчётов")
-    col1, col2, col3 = st.columns(3)
-    paths = st.session_state.get("last_report_paths") or {}
-    base = Path.cwd()
-
-    with col1:
-        jp = paths.get("json") or str(base / "audit_report.json")
-        if Path(jp).exists():
-            st.download_button(
-                "JSON",
-                Path(jp).read_bytes(),
-                file_name="audit_report.json",
-                use_container_width=True,
-            )
-    with col2:
-        hp = paths.get("html") or str(base / "audit_report.html")
-        if Path(hp).exists():
-            st.download_button(
-                "HTML",
-                Path(hp).read_bytes(),
-                file_name="audit_report.html",
-                use_container_width=True,
-            )
-    with col3:
-        pp = paths.get("pdf") or str(base / "audit_report.pdf")
-        if Path(pp).exists():
-            st.download_button(
-                "PDF",
-                Path(pp).read_bytes(),
-                file_name="audit_report.pdf",
-                use_container_width=True,
-            )
 
 
 def main() -> None:
     _init_session()
-    _render_running_banner()
-    _sync_thread_results()
+    _live_audit_panel()
+    _sync_results()
 
     st.title(f"🛡️ {APP_TITLE}")
-    st.caption("Легальный VA. Только с письменным разрешением.")
 
-    if not _render_sidebar_deps():
+    if not _sidebar_deps():
         st.stop()
 
     settings = try_load_settings()
     if not settings:
-        st.error("Задайте `CLAUDE_API_KEY` в `.env`")
+        st.error("Задайте CLAUDE_API_KEY в .env")
         st.stop()
 
-    profile = _render_profile_sidebar()
-    audit_mode = _render_audit_mode_sidebar(settings)
+    st.sidebar.divider()
+    st.sidebar.subheader("📋 Scope")
+    st.session_state.scope_ticket = st.sidebar.text_input(
+        "ID заявки / договора",
+        value=st.session_state.scope_ticket,
+    )
+    scope_ok = st.sidebar.checkbox(
+        "Подтверждаю авторизацию на тестирование",
+        value=st.session_state.pentest_authorized,
+    )
+    st.session_state.pentest_authorized = scope_ok
+
+    profile_opts = {
+        AuditProfile.LIGHT.value: "⚡ Лёгкий",
+        AuditProfile.FULL.value: "🔬 Полный",
+    }
+    prof = st.sidebar.radio(
+        "Профиль",
+        list(profile_opts.keys()),
+        format_func=lambda k: profile_opts[k],
+    )
+    profile = AuditProfile(prof)
+
+    audit_mode = AuditMode.ASSESSMENT
+    if profile == AuditProfile.FULL:
+        st.sidebar.subheader("🎚️ AI режим")
+        sel = st.sidebar.radio("Режим", [AuditMode.ASSESSMENT.value, AuditMode.PENTEST_POC.value])
+        ui_conf = scope_ok
+        if sel == AuditMode.PENTEST_POC.value:
+            audit_mode = resolve_mode(
+                sel,
+                env_enable_red_team=settings.enable_red_team,
+                ui_confirmed_execution=ui_conf,
+            )
+        else:
+            audit_mode = AuditMode.ASSESSMENT
 
     running = is_still_running() or (
-        st.session_state.audit_thread is not None
-        and st.session_state.audit_thread.is_alive()
+        st.session_state.audit_thread and st.session_state.audit_thread.is_alive()
     )
 
-    st.divider()
-    target = st.text_input("🎯 TARGET", placeholder="192.168.1.10 или https://example.com")
+    tab_dash, tab_audit = st.tabs(["Dashboard", "Новый аудит"])
 
-    c1, c2 = st.columns(2)
-    with c1:
-        start = st.button(
-            "🚀 Запустить аудит",
-            type="primary",
-            disabled=running,
-            use_container_width=True,
-        )
-    with c2:
-        if st.button("🔄 Обновить статус", disabled=not running, use_container_width=True):
-            st.rerun()
+    with tab_dash:
+        _dashboard_panel()
+        archived = st.session_state.get("_view_archived")
+        if archived:
+            st.json(archived.get("severity_summary", {}))
 
-    if start:
-        t = (target or "").strip()
-        if not t:
-            st.warning("Укажите TARGET")
-        elif red_team_enabled(audit_mode) and not st.session_state.pentest_authorized:
-            st.error("Подтвердите авторизацию в sidebar")
-        elif audit_mode == AuditMode.PENTEST_EXPLOIT and (
-            st.session_state.get("pentest_confirm_target") != t
-        ):
-            st.error("TARGET не совпадает с полем подтверждения")
-        else:
-            _start_audit_background(t, settings, profile, audit_mode)
+    with tab_audit:
+        target = st.text_input("🎯 TARGET", placeholder="https://example.com")
+        c1, c2 = st.columns(2)
+        with c1:
+            start = st.button("🚀 Запустить", type="primary", disabled=running)
+        with c2:
+            if st.button("🔄 Статус", disabled=not running):
+                st.rerun()
 
-    res = st.session_state.audit_result
-    if res and st.session_state.raw_logs:
-        st.divider()
-        _render_export_buttons()
+        if start:
+            t = (target or "").strip()
+            scope = validate_scope(
+                t,
+                ticket_id=st.session_state.scope_ticket,
+                ui_confirmed=scope_ok,
+            )
+            if not scope.allowed:
+                st.error(scope.message)
+            elif profile == AuditProfile.FULL and red_team_enabled(audit_mode) and not scope_ok:
+                st.error("Подтвердите авторизацию")
+            elif t:
+                st.session_state.audit_result = None
+                thread = threading.Thread(
+                    target=_audit_thread_target,
+                    args=(t, settings, profile, audit_mode),
+                    daemon=True,
+                )
+                st.session_state.audit_thread = thread
+                thread.start()
+                st.rerun()
+            else:
+                st.warning("Укажите TARGET")
 
-        tab_nvd, tab_parsed, tab_cve, tab_exp, tab_sigma, tab_osint, tab_raw = st.tabs([
-            "🔐 NVD / SearchSploit",
-            "📄 Данные",
-            "🚨 CVE",
-            "💣 PoC",
-            "🛡️ Sigma",
-            "🌐 OSINT",
-            "📜 Логи",
-        ])
+        report = st.session_state.audit_result or _load_report()
+        if report:
+            findings = report.get("unified_findings", [])
+            st.divider()
+            sev = report.get("severity_summary", {})
+            if sev:
+                st.bar_chart(sev)
 
-        report = _load_report_from_disk() or {}
+            m1, m2, m3 = st.columns(3)
+            m1.metric("CVE всего", len(findings))
+            m2.metric("Critical+High", sev.get("critical", 0) + sev.get("high", 0))
+            m3.metric("Профиль", report.get("audit", {}).get("profile_label", ""))
 
-        with tab_nvd:
-            st.subheader("NVD")
-            st.json(report.get("nvd_enrichment", []))
-            st.subheader("SearchSploit")
-            st.json(report.get("searchsploit", []))
+            paths = st.session_state.get("last_report_paths") or {}
+            ec1, ec2, ec3, ec4 = st.columns(4)
+            with ec1:
+                if Path(paths.get("json", "audit_report.json")).exists():
+                    st.download_button("JSON", Path(paths.get("json", REPORT_JSON)).read_bytes(), "audit.json")
+            with ec2:
+                hp = paths.get("html", "audit_report.html")
+                if Path(hp).exists():
+                    st.download_button("HTML", Path(hp).read_bytes(), "audit.html")
+            with ec3:
+                pp = paths.get("pdf", "audit_report.pdf")
+                if Path(pp).exists():
+                    st.download_button("PDF", Path(pp).read_bytes(), "audit.pdf")
+            with ec4:
+                st.download_button(
+                    "CVE CSV",
+                    findings_to_csv(findings).encode("utf-8-sig"),
+                    "cve_findings.csv",
+                    mime="text/csv",
+                )
 
-        with tab_parsed:
-            st.markdown(res.get("parsed_data", "_—_"))
-        with tab_cve:
-            st.markdown(res.get("cve_data", "_—_"))
-        with tab_exp:
-            st.markdown(res.get("exploit_data", "_—_"))
-        with tab_sigma:
-            st.markdown(res.get("sigma_playbook", "_—_"))
-        with tab_osint:
-            st.json({
-                "shodan": report.get("shodan", {}),
-                "virustotal": report.get("virustotal", {}),
-            })
-            st.markdown(res.get("osint_dorking", ""))
-        with tab_raw:
-            st.code(st.session_state.raw_logs, language="text")
+            diff = report.get("cve_diff")
+            if diff:
+                with st.expander("📈 Diff с прошлым аудитом"):
+                    st.write(f"**Новые:** {len(diff.get('new', []))} | "
+                             f"**Исчезли:** {len(diff.get('resolved', []))}")
+                    if diff.get("new"):
+                        st.dataframe(pd.DataFrame(diff["new"]), use_container_width=True)
+
+            tabs = st.tabs(["CVE таблица", "NVD", "AI", "Логи"])
+            with tabs[0]:
+                if findings:
+                    df = pd.DataFrame(findings)
+                    sev_filter = st.multiselect(
+                        "Severity",
+                        ["critical", "high", "medium", "low", "unknown"],
+                        default=["critical", "high", "medium"],
+                    )
+                    if sev_filter:
+                        df = df[df["severity"].isin(sev_filter)]
+                    st.dataframe(df, use_container_width=True, hide_index=True)
+            with tabs[1]:
+                st.json(report.get("nvd_enrichment", []))
+            with tabs[2]:
+                st.markdown(report.get("cve_data", ""))
+            with tabs[3]:
+                st.code(report.get("raw_scan_logs", ""), language="text")
 
 
 if __name__ == "__main__":
