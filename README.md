@@ -1,12 +1,12 @@
 <div align="center">
   <img src="https://img.icons8.com/color/120/000000/security-shield.png" alt="MARS Logo">
   <h1>M.A.R.S. — Multi-Agent Recon System</h1>
-  <p><b>Enterprise Web Security Audit Hub powered by AI Swarm (CrewAI + Claude 3.5 Sonnet)</b></p>
+  <p><b>Enterprise Web Security Audit Hub — CrewAI Swarm + Claude Sonnet 4.5</b></p>
 
   <p>
     <a href="https://python.org/"><img src="https://img.shields.io/badge/Python-3.10+-blue?style=flat-square&logo=python" alt="Python"></a>
-    <a href="#"><img src="https://img.shields.io/badge/CrewAI-Multi--Agent_Swarm-orange?style=flat-square" alt="CrewAI"></a>
-    <a href="#"><img src="https://img.shields.io/badge/Claude-3.5_Sonnet-purple?style=flat-square" alt="Claude"></a>
+    <a href="#"><img src="https://img.shields.io/badge/CrewAI-Swarm-orange?style=flat-square" alt="CrewAI"></a>
+    <a href="#"><img src="https://img.shields.io/badge/Claude-Sonnet_4.5-purple?style=flat-square" alt="Claude"></a>
     <a href="#"><img src="https://img.shields.io/badge/Kali_Linux-Supported-black?style=flat-square&logo=linux" alt="Kali"></a>
     <a href="#"><img src="https://img.shields.io/badge/License-MIT-green?style=flat-square" alt="License"></a>
   </p>
@@ -35,19 +35,53 @@
 | **ffuf** | Активный | Быстрый web-fuzzer: скрытые директории и файлы |
 | **dirb** | Активный | Directory bruteforce (параллельно с ffuf) |
 
-### 🧠 Multi-Agent Swarm (4 AI-агента на Claude 3.5 Sonnet)
+### 🎚️ Режимы аудита (безопасность по умолчанию)
+
+| Режим | Red Team | Запуск PoC | Когда использовать |
+|--------|----------|------------|-------------------|
+| **Security Assessment (VA)** | ❌ | ❌ | Отчёты CVE, compliance, bug bounty recon |
+| **Full Pentest — PoC Analysis** | ✅ | ❌ | Авторизованный пентест: анализ кода PoC |
+| **Exploit Verification** | ✅ | ✅* | Только lab/CTF; нужен `.env` + подтверждение в UI |
+
+\* `ALLOW_EXPLOIT_EXECUTION=true` в `.env` и совпадение TARGET в поле подтверждения (Streamlit).
+
+```env
+ENABLE_RED_TEAM=false          # по умолчанию
+ALLOW_EXPLOIT_EXECUTION=false  # по умолчанию
+```
+
+### ⚡ Профили сканирования
+
+| Профиль | Сканеры | AI |
+|---------|---------|-----|
+| **Лёгкий** | nmap + whatweb | 1× Claude API (без CrewAI) |
+| **Полный** | 8+ инструментов | CrewAI Swarm (до 5 агентов) |
+
+```bash
+python main.py --profile light   # быстрый VA
+python main.py --profile full    # по умолчанию
+```
+
+### 🧠 Multi-Agent Swarm (полный профиль)
+
+**Модель:** `anthropic/claude-sonnet-4-5` (CrewAI/LiteLLM) · лёгкий режим: `claude-sonnet-4-5-20250929` (Anthropic API)
 
 ```
-Parser Agent  →  Threat Intel Agent  →  SOC Engineer  →  OSINT Recon Agent
-(нормализация)    (CVE-корреляция)       (Sigma-правила)   (Google Dorks)
+Parser → Threat Intel → [Red Team*] → SOC Engineer → OSINT Recon
 ```
 
-| Агент | Задача | Результат |
-|---|---|---|
-| **Parser Agent** | Очищает шум из сырых логов | Структурированный список: порты, сервисы, технологии |
-| **Threat Intel Agent** | Сопоставляет версии с CVE-базой | Верифицированные CVE с CVSS, отфильтрованные False Positives |
-| **SOC Engineer** | Анализирует CVE с точки зрения защиты | Playbook по патчингу + YAML Sigma-правила для SIEM |
-| **OSINT Recon Agent** | Анализирует поддомены и данные API | Профиль атакуемой поверхности + 5–10 Google Dorks |
+\* Red Team только при `ENABLE_RED_TEAM=true` или режиме Pentest в UI.  
+`execute_exploit_payload` **заблокирован по умолчанию** (`ALLOW_EXPLOIT_EXECUTION=false`).
+
+| # | Агент | Задача |
+|---|--------|--------|
+| 1 | **Parser** | Нормализация логов |
+| 2 | **Threat Intel** | CVE + поиск PoC (Pompem) |
+| 3 | **Red Team** *(опц.)* | Статический анализ PoC / верификация* |
+| 4 | **SOC Engineer** | Playbook + Sigma |
+| 5 | **OSINT Recon** | Поверхность атаки + Google Dorks |
+
+\* Запуск эксплойтов — только в режиме Exploit Verification.
 
 ### 🌐 OSINT (4 источника)
 
@@ -68,37 +102,30 @@ Parser Agent  →  Threat Intel Agent  →  SOC Engineer  →  OSINT Recon Agent
 - **Source IP** для nmap (`-S`)
 - **HTTP-прокси** для whatweb, nikto, ffuf, wpscan (включая Burp Suite)
 
-### 📊 Отчётность
+### 📊 Отчётность (CLI = Streamlit)
 
-- **Streamlit UI** с детальным прогрессом по 4 шагам
-- Вкладки: Данные / CVE / Sigma & Playbook / OSINT & Dorks / Сырые логи
-- Экспорт в **HTML** и **PDF** (`wkhtmltopdf`)
+- **NVD** + **SearchSploit** в обоих интерфейсах
+- Экспорт **JSON / HTML / PDF** (кнопки загрузки в Streamlit)
+- Логи: `logs/mars_audit.log`
+- **Остановка аудита** и статус после обновления страницы (`logs/mars_audit_state.json`)
+- Rate-limit очередь для NVD / Shodan / VirusTotal
 
 ---
 
 ## 🗂️ Архитектура
 
 ```text
-Multi-Agent-Recon-System/
-├── app.py                      # Streamlit UI (4-шаговый прогресс)
-├── main.py                     # CLI-оркестратор
-├── requirements.txt
-├── .env.example                # Шаблон конфигурации
-├── tests/                      # Pytest + mock-тесты
-└── core/
-    ├── config.py               # Загрузка и валидация .env
-    ├── dependency_manager.py   # Проверка системных утилит
-    ├── scanner.py              # Async запуск всех 8 сканеров
-    ├── ping_checker.py         # ICMP + TCP ping перед сканированием
-    ├── shodan_client.py        # Shodan API
-    ├── virustotal_client.py    # VirusTotal API v3
-    ├── nvd_client.py           # NIST NVD API 2.0
-    ├── searchsploit_client.py  # Exploit-DB
-    ├── reporter.py             # HTML + PDF отчёты
-    └── swarm/
-        ├── agents.py           # 4 AI-агента (CrewAI)
-        ├── tasks.py            # Промпты и задачи агентов
-        └── orchestrator.py     # MARSSwarmManager
+├── app.py / main.py            # UI и CLI → core/audit_pipeline.py
+├── core/
+│   ├── audit_pipeline.py       # Единый пайплайн
+│   ├── audit_state.py          # Состояние (переживает refresh)
+│   ├── cancel_registry.py      # Отмена + kill PID
+│   ├── light_analyzer.py       # Лёгкий Claude
+│   ├── rate_limiter.py         # Очередь API
+│   ├── logger.py               # logs/mars_audit.log
+│   └── swarm/                  # CrewAI (5 агентов, Red Team опц.)
+├── .github/workflows/ci.yml    # ruff + mypy + pytest
+└── tests/
 ```
 
 ---
@@ -176,13 +203,16 @@ python3 main.py
 
 ---
 
-## 🧪 Тестирование
+## 🧪 Тестирование и CI
 
 ```bash
-pytest tests/ -v
+pip install -r requirements-dev.txt
+ruff check .
+mypy core app.py main.py
+pytest tests/ -q --ignore=tests/test_swarm.py
 ```
 
-Тесты используют `unittest.mock` — не требуют реальных API-ключей или сетевых запросов.
+GitHub Actions: `.github/workflows/ci.yml` (ruff, mypy, pytest).
 
 ---
 

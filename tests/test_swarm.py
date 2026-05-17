@@ -13,7 +13,9 @@ def test_swarm_manager_run_analysis(mock_crew_class):
     # since they are dynamically created inside run_analysis.
     # Instead, we just test that Crew kickoff is called.
     
-    manager = MARSSwarmManager()
+    from core.security_mode import AuditMode
+
+    manager = MARSSwarmManager(mode=AuditMode.ASSESSMENT)
     
     # In older versions of CrewAI, outputs are attributes on the task.
     # We will just verify it doesn't crash and returns the mocked summary.

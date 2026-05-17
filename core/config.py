@@ -13,6 +13,8 @@ from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
+from .security_mode import parse_bool_env
+
 # IPv4 (упрощённая проверка) и hostname/URL
 _IPV4_RE = re.compile(
     r"^(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}"
@@ -35,6 +37,8 @@ class Settings:
     network_interface: str | None = None
     source_ip: str | None = None
     http_proxy: str | None = None
+    enable_red_team: bool = False
+    allow_exploit_execution: bool = False
 
 
 def _fail(message: str) -> None:
@@ -137,6 +141,8 @@ def load_settings(env_path: str | None = None) -> Settings:
         network_interface=net_iface,
         source_ip=source_ip,
         http_proxy=http_proxy,
+        enable_red_team=parse_bool_env("ENABLE_RED_TEAM", default=False),
+        allow_exploit_execution=parse_bool_env("ALLOW_EXPLOIT_EXECUTION", default=False),
     )
 
 def try_load_settings(env_path: str | None = None) -> Settings | None:
@@ -179,4 +185,6 @@ def try_load_settings(env_path: str | None = None) -> Settings | None:
         network_interface=net_iface,
         source_ip=source_ip,
         http_proxy=http_proxy,
+        enable_red_team=parse_bool_env("ENABLE_RED_TEAM", default=False),
+        allow_exploit_execution=parse_bool_env("ALLOW_EXPLOIT_EXECUTION", default=False),
     )

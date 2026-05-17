@@ -18,9 +18,11 @@ build/
 # Streamlit
 .streamlit/secrets.toml
 
-# Отчёты (локальные результаты сканов)
+# Отчёты и runtime-состояние
 audit_report.json
 audit_report.html
+audit_report.pdf
+logs/
 
 # IDE / OS
 .idea/

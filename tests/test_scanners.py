@@ -7,6 +7,7 @@ from core.scanner import _run_command_async, run_nmap_async
 @patch("core.scanner.asyncio.create_subprocess_exec")
 async def test_run_command_async_success(mock_exec):
     mock_process = MagicMock()
+    mock_process.pid = 12345
     mock_process.returncode = 0
     # communicate is a coroutine
     async def mock_communicate():

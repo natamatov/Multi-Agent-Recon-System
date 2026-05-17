@@ -1,31 +1,41 @@
 #!/usr/bin/env python3
 """
-MARS SOLUTIONS - Security Assessment Hub (Swarm Edition)
-Streamlit UI для легального Vulnerability Assessment (Kali Linux).
+M.A.R.S. — Streamlit UI (единый пайплайн, отмена, экспорт отчётов).
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any
+import threading
+from pathlib import Path
 
 import streamlit as st
 
-from core.config import try_load_settings
-from core.dependency_manager import (
-    _APT_PACKAGES,
-    check_tools,
-    missing_tools,
+from core.audit_pipeline import run_audit_async, save_reports
+from core.audit_profile import AuditProfile, profile_label
+from core.audit_state import (
+    is_still_running,
+    load_state,
+    mark_idle,
 )
-from core.ping_checker import check_target_alive
-from core.scanner import run_parallel_scans
-from core.shodan_client import run_shodan_recon
-from core.virustotal_client import run_virustotal_recon
-from core.swarm.orchestrator import MARSSwarmManager
+from core.cancel_registry import AuditCancellation
+from core.config import try_load_settings
+from core.dependency_manager import _APT_PACKAGES, check_tools, missing_tools
+from core.logger import setup_logging, get_logger
+from core.security_mode import (
+    AuditMode,
+    exploit_execution_enabled,
+    mode_label,
+    red_team_enabled,
+    resolve_mode,
+)
 
+setup_logging()
+log = get_logger("mars.ui")
 
-# ——— Конфигурация страницы ———
+REPORT_JSON = Path("audit_report.json")
+
 st.set_page_config(
     page_title="M.A.R.S. Security Assessment Hub",
     page_icon="🛡️",
@@ -37,303 +47,351 @@ APP_TITLE = "M.A.R.S. — Multi-Agent Recon System"
 
 
 def _init_session() -> None:
-    if "tool_status" not in st.session_state:
-        st.session_state.tool_status = check_tools()
-    if "audit_result" not in st.session_state:
-        st.session_state.audit_result = None
-    if "raw_logs" not in st.session_state:
-        st.session_state.raw_logs = None
-    if "ping_result" not in st.session_state:
-        st.session_state.ping_result = None
+    defaults = {
+        "tool_status": check_tools(),
+        "audit_result": None,
+        "raw_logs": None,
+        "ping_result": None,
+        "audit_mode": AuditMode.ASSESSMENT.value,
+        "audit_profile": AuditProfile.FULL.value,
+        "pentest_authorized": False,
+        "audit_thread": None,
+        "last_report_paths": None,
+    }
+    for key, val in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = val
 
 
-def _render_sidebar() -> bool:
-    st.sidebar.header("🔧 Зависимости системы")
-    status: dict[str, bool] = st.session_state.tool_status
+def _load_report_from_disk() -> dict | None:
+    if REPORT_JSON.exists():
+        try:
+            return json.loads(REPORT_JSON.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return None
+    return None
 
-    all_ok = all(status.values())
-    if all_ok:
+
+def _render_running_banner() -> None:
+    state = load_state()
+    if not is_still_running() and state.status != "running":
+        return
+
+    st.warning(
+        f"⏳ **Аудит выполняется** — цель: `{state.target}` | "
+        f"{state.message or '...'}"
+    )
+    if state.child_pids:
+        st.caption(f"Дочерние PID: {', '.join(map(str, state.child_pids))}")
+
+    if st.button("🛑 Остановить аудит", type="primary", key="stop_audit"):
+        from core.audit_state import mark_cancelled
+
+        killed = AuditCancellation.get().request_cancel()
+        mark_cancelled(f"Остановлено пользователем (PID: {len(killed)})")
+        st.session_state.audit_thread = None
+        st.error(f"Отмена запрошена. Завершено процессов: {len(killed)}")
+        st.rerun()
+
+
+def _audit_thread_target(
+    target: str,
+    settings,
+    profile: AuditProfile,
+    mode: AuditMode,
+) -> None:
+    """Фоновый поток: результат только в audit_report.* и audit_state.json."""
+    try:
+        report = asyncio.run(
+            run_audit_async(
+                target,
+                settings,
+                profile=profile,
+                audit_mode=mode,
+            )
+        )
+        paths = save_reports(report, Path.cwd())
+        Path("logs/mars_report_paths.json").write_text(
+            json.dumps(paths, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    except Exception:
+        log.exception("Ошибка в потоке аудита")
+
+
+def _start_audit_background(
+    target: str,
+    settings,
+    profile: AuditProfile,
+    mode: AuditMode,
+) -> None:
+    if st.session_state.audit_thread and st.session_state.audit_thread.is_alive():
+        st.warning("Аудит уже выполняется.")
+        return
+
+    st.session_state.audit_result = None
+    st.session_state.raw_logs = None
+
+    thread = threading.Thread(
+        target=_audit_thread_target,
+        args=(target, settings, profile, mode),
+        daemon=True,
+        name="mars-audit",
+    )
+    st.session_state.audit_thread = thread
+    thread.start()
+    st.info("Аудит запущен в фоне. Можно обновить страницу — статус сохранится.")
+    st.rerun()
+
+
+def _report_to_ui(report: dict) -> None:
+    st.session_state.audit_result = {
+        "parsed_data": report.get("parsed_data", ""),
+        "cve_data": report.get("cve_data", ""),
+        "exploit_data": report.get("exploit_data", ""),
+        "sigma_playbook": report.get("sigma_playbook", ""),
+        "osint_dorking": report.get("osint_dorking", ""),
+        "audit_mode_label": report.get("audit_mode_label", ""),
+        "red_team_enabled": report.get("red_team_enabled", False),
+        "exploit_execution_enabled": report.get("exploit_execution_enabled", False),
+        "success": report.get("success", True),
+    }
+    st.session_state.raw_logs = report.get("raw_scan_logs", "")
+
+
+def _sync_thread_results() -> None:
+    """Подхватывает результат после обновления страницы (файлы на диске)."""
+    paths_file = Path("logs/mars_report_paths.json")
+    if paths_file.exists():
+        try:
+            st.session_state.last_report_paths = json.loads(
+                paths_file.read_text(encoding="utf-8")
+            )
+        except json.JSONDecodeError:
+            pass
+
+    thread = st.session_state.get("audit_thread")
+    if thread is not None and not thread.is_alive():
+        st.session_state.audit_thread = None
+
+    state = load_state()
+    if state.status in ("completed", "error", "cancelled"):
+        report = _load_report_from_disk()
+        if report and not st.session_state.audit_result:
+            _report_to_ui(report)
+
+
+def _render_sidebar_deps() -> bool:
+    st.sidebar.header("🔧 Зависимости")
+    status = st.session_state.tool_status
+    missing = missing_tools(status)
+
+    if not missing:
         st.sidebar.success("✅ Все утилиты доступны")
     else:
-        st.sidebar.warning("⚠️ Некоторые утилиты отсутствуют")
-
-    with st.sidebar.expander("Статус утилит", expanded=not all_ok):
-        for tool, available in status.items():
-            icon = "✅" if available else "❌"
-            st.write(f"{icon} `{tool}`")
-
-    missing = missing_tools(status)
-    if missing:
-        st.sidebar.divider()
-        for tool in missing:
-            package = _APT_PACKAGES.get(tool, tool)
-            st.sidebar.code(f"sudo apt install {package}", language="bash")
-
-        if st.sidebar.button("🔄 Проверить снова", use_container_width=True):
+        st.sidebar.warning("⚠️ Не хватает утилит")
+        with st.sidebar.expander("Установка", expanded=True):
+            for tool in missing:
+                pkg = _APT_PACKAGES.get(tool, tool)
+                st.code(f"sudo apt install {pkg}", language="bash")
+        if st.sidebar.button("🔄 Проверить снова"):
             st.session_state.tool_status = check_tools()
             st.rerun()
         return False
 
-    if st.sidebar.button("🔄 Обновить статус", use_container_width=True):
+    if st.sidebar.button("🔄 Обновить статус"):
         st.session_state.tool_status = check_tools()
         st.rerun()
-
-    # Показать сетевые настройки если заданы
-    settings = st.session_state.get("_settings")
-    if settings:
-        st.sidebar.divider()
-        st.sidebar.caption("🌐 Сетевые настройки")
-        if settings.network_interface:
-            st.sidebar.info(f"Интерфейс: `{settings.network_interface}`")
-        if settings.http_proxy:
-            st.sidebar.info(f"Прокси: `{settings.http_proxy}`")
-        if settings.source_ip:
-            st.sidebar.info(f"Source IP: `{settings.source_ip}`")
-
     return True
 
 
-def _run_audit(target: str) -> None:
-    """Выполняет полный цикл аудита с детальным прогрессом."""
-    settings = st.session_state.get("_settings")
+def _render_profile_sidebar() -> AuditProfile:
+    st.sidebar.divider()
+    st.sidebar.subheader("📋 Профиль сканирования")
+    opts = {
+        AuditProfile.LIGHT.value: "⚡ Лёгкий (nmap + whatweb + Claude)",
+        AuditProfile.FULL.value: "🔬 Полный (все сканеры + Swarm)",
+    }
+    sel = st.sidebar.radio(
+        "Профиль",
+        list(opts.keys()),
+        format_func=lambda k: opts[k],
+        index=0 if st.session_state.audit_profile == AuditProfile.LIGHT.value else 1,
+    )
+    st.session_state.audit_profile = sel
+    return AuditProfile(sel)
 
-    with st.status("🚀 Выполнение аудита...", expanded=True) as audit_status:
 
-        # ─── Шаг 0: Проверка доступности цели ───────────────────────────────
-        st.write("---")
-        st.write("**[0/4] 📡 Проверка доступности цели...**")
-        ping_result = asyncio.run(check_target_alive(target))
-        st.session_state.ping_result = ping_result
+def _render_audit_mode_sidebar(settings) -> AuditMode:
+    st.sidebar.divider()
+    st.sidebar.subheader("🎚️ Режим AI (CrewAI)")
+    if st.session_state.audit_profile == AuditProfile.LIGHT.value:
+        st.sidebar.info("В лёгком профиле используется один вызов Claude (без Swarm).")
+        return AuditMode.ASSESSMENT
 
-        if ping_result.is_alive:
-            lat = f" ({ping_result.latency_ms:.1f} ms)" if ping_result.latency_ms else ""
-            ip_info = f" → `{ping_result.resolved_ip}`" if ping_result.resolved_ip else ""
-            st.success(f"✅ Цель доступна via **{ping_result.method}**{lat}{ip_info}")
-        else:
-            # Хост недоступен — предупреждаем, но не останавливаем
-            # (файрвол может блокировать ping, но сканеры всё равно попробуют)
-            st.warning(
-                f"⚠️ Цель не отвечает на ping ({ping_result.error}). "
-                "Сканирование будет продолжено — возможно, ICMP заблокирован файрволом."
+    mode_options = {
+        AuditMode.ASSESSMENT.value: "🛡️ VA (Red Team выкл.)",
+        AuditMode.PENTEST_POC.value: "🔬 Pentest — PoC Analysis",
+        AuditMode.PENTEST_EXPLOIT.value: "⚠️ Exploit Verification",
+    }
+    selected = st.sidebar.radio(
+        "Режим",
+        list(mode_options.keys()),
+        format_func=lambda k: mode_options[k],
+    )
+    ui_confirmed = False
+    if selected == AuditMode.PENTEST_EXPLOIT.value:
+        st.session_state.pentest_authorized = st.sidebar.checkbox(
+            "Письменное разрешение на тестирование",
+            value=st.session_state.pentest_authorized,
+        )
+        confirm = st.sidebar.text_input("Повторите TARGET", key="pentest_confirm")
+        st.session_state.pentest_confirm_target = confirm.strip()
+        ui_confirmed = st.session_state.pentest_authorized and bool(confirm.strip())
+    elif selected == AuditMode.PENTEST_POC.value:
+        st.session_state.pentest_authorized = st.sidebar.checkbox(
+            "Авторизованный пентест",
+            value=st.session_state.pentest_authorized,
+        )
+        ui_confirmed = st.session_state.pentest_authorized
+    else:
+        st.session_state.pentest_authorized = False
+
+    mode = resolve_mode(
+        selected,
+        env_enable_red_team=settings.enable_red_team,
+        env_allow_execution=settings.allow_exploit_execution,
+        ui_confirmed_execution=ui_confirmed,
+    )
+    st.sidebar.caption(f"Активно: **{mode_label(mode)}**")
+    return mode
+
+
+def _render_export_buttons() -> None:
+    st.subheader("📥 Экспорт отчётов")
+    col1, col2, col3 = st.columns(3)
+    paths = st.session_state.get("last_report_paths") or {}
+    base = Path.cwd()
+
+    with col1:
+        jp = paths.get("json") or str(base / "audit_report.json")
+        if Path(jp).exists():
+            st.download_button(
+                "JSON",
+                Path(jp).read_bytes(),
+                file_name="audit_report.json",
+                use_container_width=True,
             )
-
-        # ─── Шаг 1: Параллельное сканирование ───────────────────────────────
-        st.write("---")
-        st.write("**[1/4] 🔍 Параллельный запуск сканеров...**")
-
-        scanners_info = [
-            ("nmap", "Порты и версии сервисов"),
-            ("whatweb", "Fingerprint веб-стека"),
-            ("nuclei", "CVE и misconfig шаблоны"),
-            ("subfinder", "Поиск поддоменов"),
-            ("wpscan", "WordPress аудит"),
-            ("nikto", "Уязвимости веб-сервера"),
-            ("waf", "Детекция WAF/CDN (WebCheck)"),
-        ]
-        cols = st.columns(3)
-        for i, (tool, desc) in enumerate(scanners_info):
-            with cols[i % 3]:
-                st.info(f"⏳ **{tool}**\n{desc}")
-
-        try:
-            bundle = asyncio.run(run_parallel_scans(
-                target,
-                wpscan_api_key=settings.wpscan_api_key if settings else None,
-                network_interface=settings.network_interface if settings else None,
-                source_ip=settings.source_ip if settings else None,
-                http_proxy=settings.http_proxy if settings else None,
-            ))
-        except Exception as e:
-            audit_status.update(label="❌ Ошибка сканирования", state="error")
-            st.error(f"Критическая ошибка сканирования: {e}")
-            return
-
-        logs = bundle.to_log_text()
-        st.session_state.raw_logs = logs
-
-        # Вывод итогов по каждому сканеру
-        st.write("📊 **Результаты сканирования:**")
-        cols2 = st.columns(3)
-        for i, result in enumerate(bundle.results):
-            with cols2[i % 3]:
-                if result.success:
-                    lines = result.stdout.strip().count("\n") + 1 if result.stdout.strip() else 0
-                    st.success(f"✅ **{result.tool}** — {lines} строк")
-                else:
-                    st.error(f"❌ **{result.tool}** — {result.error_message}")
-        if bundle.nuclei:
-            n = len(bundle.nuclei.findings)
-            if bundle.nuclei.success:
-                st.success(f"✅ **nuclei** — {n} находок")
-            else:
-                st.warning(f"⚠️ **nuclei** — {bundle.nuclei.error_message}")
-        
-        if bundle.waf:
-            if bundle.waf.get("detected"):
-                st.error(f"🛡️ **WAF/CDN** — Обнаружен ({', '.join(bundle.waf.get('providers', []))})")
-            else:
-                st.success("✅ **WAF/CDN** — Не обнаружен")
-
-        # ─── Шаг 2: OSINT ────────────────────────────────────────────────────
-        st.write("---")
-        st.write("**[2/4] 🌐 Пассивная разведка (OSINT)...**")
-
-        col_s, col_v = st.columns(2)
-        with col_s:
-            with st.spinner("Запрос к Shodan..."):
-                shodan_res = run_shodan_recon(
-                    target,
-                    api_key=settings.shodan_api_key if settings else None
-                )
-            if shodan_res.get("success"):
-                ports = shodan_res.get("open_ports", [])
-                st.success(f"✅ Shodan: {len(ports)} открытых портов {ports[:5]}")
-            else:
-                st.info(f"ℹ️ Shodan: {shodan_res.get('error')}")
-
-        with col_v:
-            with st.spinner("Запрос к VirusTotal..."):
-                vt_res = run_virustotal_recon(
-                    target,
-                    api_key=settings.virustotal_api_key if settings else None
-                )
-            if vt_res.get("success"):
-                mal = vt_res.get("malicious", 0)
-                if mal > 0:
-                    st.error(f"🚨 VirusTotal: {mal} движков считают цель вредоносной!")
-                else:
-                    st.success("✅ VirusTotal: цель чистая (0 детектов)")
-            else:
-                st.info(f"ℹ️ VirusTotal: {vt_res.get('error')}")
-
-        osint_data = f"SHODAN: {json.dumps(shodan_res, ensure_ascii=False)}\n\n"
-        osint_data += f"VIRUSTOTAL: {json.dumps(vt_res, ensure_ascii=False)}\n\n"
-        subfinder_res = next((r for r in bundle.results if r.tool == "subfinder"), None)
-        if subfinder_res and subfinder_res.success and subfinder_res.stdout.strip():
-            subs = subfinder_res.stdout.strip().splitlines()
-            st.info(f"🔗 Subfinder нашёл {len(subs)} поддоменов")
-            osint_data += f"SUBFINDER:\n{subfinder_res.stdout}\n"
-            
-        if bundle.waf:
-            osint_data += f"WAF/CDN DETECTION:\n{json.dumps(bundle.waf, ensure_ascii=False, indent=2)}\n"
-
-        # ─── Шаг 3: AI Swarm ─────────────────────────────────────────────────
-        st.write("---")
-        st.write("**[3/4] 🤖 Запуск мультиагентного роя (CrewAI)...**")
-
-        agent_steps = []
-
-        def step_callback(step_info):
-            name = getattr(step_info, "name", None) or "выполняет анализ"
-            agent_steps.append(name)
-            st.write(f"  ⚙️ Агент: *{name}*")
-
-        with st.spinner("Агенты анализируют данные... Это займёт 1-3 минуты."):
-            manager = MARSSwarmManager(step_callback=step_callback)
-            swarm_results = manager.run_analysis(logs, osint_data=osint_data)
-
-        if not swarm_results.get("success"):
-            audit_status.update(label="❌ Ошибка AI-анализа", state="error")
-            st.error(f"Ошибка роя агентов: {swarm_results.get('error')}")
-            return
-
-        st.success(f"✅ AI Swarm завершён ({len(agent_steps)} шагов)")
-
-        # ─── Шаг 4: Готово ───────────────────────────────────────────────────
-        st.write("---")
-        st.write("**[4/4] 📋 Отчёт готов!** Перейдите к вкладкам ниже.")
-
-        st.session_state.audit_result = swarm_results
-        audit_status.update(label="✅ Аудит завершён успешно!", state="complete")
+    with col2:
+        hp = paths.get("html") or str(base / "audit_report.html")
+        if Path(hp).exists():
+            st.download_button(
+                "HTML",
+                Path(hp).read_bytes(),
+                file_name="audit_report.html",
+                use_container_width=True,
+            )
+    with col3:
+        pp = paths.get("pdf") or str(base / "audit_report.pdf")
+        if Path(pp).exists():
+            st.download_button(
+                "PDF",
+                Path(pp).read_bytes(),
+                file_name="audit_report.pdf",
+                use_container_width=True,
+            )
 
 
 def main() -> None:
     _init_session()
+    _render_running_banner()
+    _sync_thread_results()
 
     st.title(f"🛡️ {APP_TITLE}")
-    st.caption(
-        "Легальный Vulnerability Assessment с Multi-Agent AI Swarm. "
-        "**Используйте только на системах с письменным разрешением.**"
-    )
+    st.caption("Легальный VA. Только с письменным разрешением.")
 
-    deps_ok = _render_sidebar()
+    if not _render_sidebar_deps():
+        st.stop()
 
     settings = try_load_settings()
-    if settings is None:
-        st.error(
-            "❌ Не задан `CLAUDE_API_KEY` в файле `.env`. "
-            "Скопируйте `.env.example` → `.env` и вставьте ваш ключ Anthropic."
-        )
+    if not settings:
+        st.error("Задайте `CLAUDE_API_KEY` в `.env`")
         st.stop()
 
-    st.session_state["_settings"] = settings
+    profile = _render_profile_sidebar()
+    audit_mode = _render_audit_mode_sidebar(settings)
 
-    if not deps_ok:
-        st.warning("⚠️ Установите все системные утилиты (см. боковую панель) и обновите статус.")
-        st.stop()
+    running = is_still_running() or (
+        st.session_state.audit_thread is not None
+        and st.session_state.audit_thread.is_alive()
+    )
 
     st.divider()
+    target = st.text_input("🎯 TARGET", placeholder="192.168.1.10 или https://example.com")
 
-    col_input, col_btn = st.columns([4, 1])
-    with col_input:
-        target = st.text_input(
-            "🎯 TARGET (IP, домен или URL)",
-            placeholder="192.168.1.10 или https://example.com",
-            label_visibility="collapsed",
+    c1, c2 = st.columns(2)
+    with c1:
+        start = st.button(
+            "🚀 Запустить аудит",
+            type="primary",
+            disabled=running,
+            use_container_width=True,
         )
-    with col_btn:
-        run_clicked = st.button("🚀 Запустить аудит", type="primary", use_container_width=True)
+    with c2:
+        if st.button("🔄 Обновить статус", disabled=not running, use_container_width=True):
+            st.rerun()
 
-    if run_clicked:
-        if not target or not target.strip():
-            st.warning("⚠️ Укажите TARGET перед запуском.")
+    if start:
+        t = (target or "").strip()
+        if not t:
+            st.warning("Укажите TARGET")
+        elif red_team_enabled(audit_mode) and not st.session_state.pentest_authorized:
+            st.error("Подтвердите авторизацию в sidebar")
+        elif audit_mode == AuditMode.PENTEST_EXPLOIT and (
+            st.session_state.get("pentest_confirm_target") != t
+        ):
+            st.error("TARGET не совпадает с полем подтверждения")
         else:
-            # Очищаем предыдущие результаты
-            st.session_state.audit_result = None
-            st.session_state.raw_logs = None
-            st.session_state.ping_result = None
-            _run_audit(target.strip())
+            _start_audit_background(t, settings, profile, audit_mode)
 
-    # ─── Вывод результатов ───────────────────────────────────────────────────
     res = st.session_state.audit_result
     if res and st.session_state.raw_logs:
         st.divider()
-        st.subheader("📊 Результаты аудита")
+        _render_export_buttons()
 
-        tab_parsed, tab_cve, tab_exploit, tab_sigma, tab_osint, tab_raw = st.tabs([
-            "📄 Нормализованные данные",
-            "🚨 Уязвимости (CVE)",
-            "💣 Эксплойты (PoC)",
-            "🛡️ Sigma & Playbook",
-            "🌐 OSINT & Dorking",
-            "📜 Сырые логи",
+        tab_nvd, tab_parsed, tab_cve, tab_exp, tab_sigma, tab_osint, tab_raw = st.tabs([
+            "🔐 NVD / SearchSploit",
+            "📄 Данные",
+            "🚨 CVE",
+            "💣 PoC",
+            "🛡️ Sigma",
+            "🌐 OSINT",
+            "📜 Логи",
         ])
 
+        report = _load_report_from_disk() or {}
+
+        with tab_nvd:
+            st.subheader("NVD")
+            st.json(report.get("nvd_enrichment", []))
+            st.subheader("SearchSploit")
+            st.json(report.get("searchsploit", []))
+
         with tab_parsed:
-            st.subheader("Извлечённые данные (Parser Agent)")
-            st.markdown(res.get("parsed_data", "_Нет данных._"))
-
+            st.markdown(res.get("parsed_data", "_—_"))
         with tab_cve:
-            st.subheader("Анализ уязвимостей (Threat Intel Agent)")
-            st.markdown(res.get("cve_data", "_Уязвимости не обнаружены._"))
-
-        with tab_exploit:
-            st.subheader("Верификация эксплойтов (Red Team Agent)")
-            st.markdown(res.get("exploit_data", "_Эксплойты не загружены._"))
-
+            st.markdown(res.get("cve_data", "_—_"))
+        with tab_exp:
+            st.markdown(res.get("exploit_data", "_—_"))
         with tab_sigma:
-            st.subheader("Защитный Playbook & Sigma-правила (SOC Engineer)")
-            st.markdown(res.get("sigma_playbook", "_Playbook не сгенерирован._"))
-
+            st.markdown(res.get("sigma_playbook", "_—_"))
         with tab_osint:
-            st.subheader("Поверхность атаки & Google Dorks (OSINT Agent)")
-            ping = st.session_state.get("ping_result")
-            if ping:
-                st.info(ping.summary())
-            st.markdown(res.get("osint_dorking", "_OSINT данные не сгенерированы._"))
-
+            st.json({
+                "shodan": report.get("shodan", {}),
+                "virustotal": report.get("virustotal", {}),
+            })
+            st.markdown(res.get("osint_dorking", ""))
         with tab_raw:
-            st.subheader("Сырые логи сканирования")
             st.code(st.session_state.raw_logs, language="text")
 
 

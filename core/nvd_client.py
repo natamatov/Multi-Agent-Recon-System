@@ -5,17 +5,17 @@
 from __future__ import annotations
 
 import json
-import time
 import urllib.error
 import urllib.request
 from typing import Any
+
+from core.cancel_registry import AuditCancelledError, is_audit_cancelled
+from core.rate_limiter import NVD_LIMITER
 
 from .utils import extract_cve_ids
 
 
 NVD_API_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
-# NVD без API-ключа: ~5 запросов / 30 с
-_REQUEST_DELAY_SEC = 6.5
 
 
 def _fetch_cve(cve_id: str, api_key: str | None = None) -> dict[str, Any] | None:
@@ -96,10 +96,14 @@ def enrich_cves_from_text(
     cve_ids = extract_cve_ids(text)[:max_cves]
     enriched: list[dict[str, Any]] = []
 
-    for index, cve_id in enumerate(cve_ids):
-        if index > 0:
-            time.sleep(_REQUEST_DELAY_SEC)
-        record = _fetch_cve(cve_id, api_key=api_key)
+    for cve_id in cve_ids:
+        if is_audit_cancelled():
+            raise AuditCancelledError("NVD: аудит отменён")
+
+        def _fetch_one(cid: str = cve_id) -> dict[str, Any] | None:
+            return _fetch_cve(cid, api_key=api_key)
+
+        record = NVD_LIMITER.call(_fetch_one, is_cancelled=is_audit_cancelled)
         if record:
             enriched.append(record)
         else:

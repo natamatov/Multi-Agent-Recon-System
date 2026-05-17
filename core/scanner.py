@@ -9,6 +9,9 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import Any, Sequence
 
+from core.cancel_registry import AuditCancelledError, AuditCancellation, is_audit_cancelled
+from core.audit_state import update_progress
+
 from .nuclei_worker import NucleiScanResult, run_nuclei_scan_async
 from .waf_detector import run_waf_check
 from .utils import build_url, extract_host
@@ -96,16 +99,43 @@ async def _run_command_async(
 ) -> ScanResult:
     """
     Асинхронный запуск внешней утилиты (без shell=True).
+    Регистрирует PID для отмены через AuditCancellation.
     """
+    if is_audit_cancelled():
+        return ScanResult(
+            tool=tool,
+            command=list(command),
+            success=False,
+            error_message="Аудит отменён",
+        )
+
+    cancel = AuditCancellation.get()
+    process = None
     try:
         process = await asyncio.create_subprocess_exec(
             *command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
+        if process.pid:
+            cancel.register_pid(process.pid)
+            update_progress(
+                f"Сканер {tool} (pid {process.pid})",
+                cancel.snapshot_pids(),
+            )
+
         stdout_bytes, stderr_bytes = await asyncio.wait_for(
             process.communicate(),
             timeout=timeout,
+        )
+    except AuditCancelledError:
+        if process and process.returncode is None:
+            process.kill()
+        return ScanResult(
+            tool=tool,
+            command=list(command),
+            success=False,
+            error_message="Аудит отменён",
         )
     except asyncio.TimeoutError:
         return ScanResult(
@@ -227,6 +257,23 @@ async def run_ffuf_async(target: str, timeout: int = 300) -> ScanResult:
         wordlist = "/usr/share/dirb/wordlists/common.txt"
     command = ["ffuf", "-u", f"{url}/FUZZ", "-w", wordlist, "-mc", "200,301,302,403", "-t", "50", "-s"]
     return await _run_command_async("ffuf", command, timeout=timeout)
+
+
+async def run_light_scans(
+    target: str,
+    *,
+    network_interface: str | None = None,
+    source_ip: str | None = None,
+    http_proxy: str | None = None,
+) -> ScanBundle:
+    """Лёгкий профиль: только nmap и whatweb параллельно."""
+    bundle = ScanBundle(target=target)
+    nmap_r, whatweb_r = await asyncio.gather(
+        run_nmap_async(target, interface=network_interface, source_ip=source_ip),
+        run_whatweb_async(target, proxy=http_proxy),
+    )
+    bundle.results.extend([nmap_r, whatweb_r])
+    return bundle
 
 
 async def run_parallel_scans(
