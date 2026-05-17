@@ -58,6 +58,15 @@ def _init_session() -> None:
             st.session_state[key] = val
 
 
+def _is_audit_running() -> bool:
+    """True, если аудит в процессе (state-файл или живой поток)."""
+    thread = st.session_state.get("audit_thread")
+    return bool(
+        is_still_running()
+        or (thread is not None and thread.is_alive())
+    )
+
+
 def _load_report() -> dict | None:
     if REPORT_JSON.exists():
         try:
@@ -71,11 +80,7 @@ def _load_report() -> dict | None:
 def _live_audit_panel() -> None:
     """Авто-обновление каждые 5 с при running."""
     state = load_state()
-    running = is_still_running() or (
-        st.session_state.get("audit_thread") is not None
-        and st.session_state.audit_thread.is_alive()
-    )
-    if not running:
+    if not _is_audit_running():
         return
 
     st.warning(f"⏳ **Аудит:** `{state.target}` — {state.message or '...'}")
@@ -100,7 +105,7 @@ def _dashboard_panel() -> None:
     _sync_results()
     state = load_state()
     thread = st.session_state.get("audit_thread")
-    running = is_still_running() or (thread is not None and thread.is_alive())
+    running = _is_audit_running()
     current = "running" if running else state.status
     prev = st.session_state.get("_dash_last_status")
     if prev == "running" and current == "completed":
@@ -252,9 +257,7 @@ def main() -> None:
         else:
             audit_mode = AuditMode.ASSESSMENT
 
-    running = is_still_running() or (
-        st.session_state.audit_thread and st.session_state.audit_thread.is_alive()
-    )
+    running = _is_audit_running()
 
     tab_dash, tab_audit = st.tabs(["Dashboard", "Новый аудит"])
 
