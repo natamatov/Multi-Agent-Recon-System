@@ -43,8 +43,6 @@ from core.searchsploit_client import lookup_technologies
 from core.security_mode import AuditMode, exploit_execution_enabled, mode_from_env, mode_label
 from core.shodan_client import run_shodan_recon
 from core.virustotal_client import run_virustotal_recon
-from core.swarm.orchestrator import MARSSwarmManager
-
 log = get_logger("mars.pipeline")
 
 ProgressCallback = Callable[[str], None]
@@ -211,6 +209,8 @@ def _run_ai_swarm(
         os.environ["ALLOW_EXPLOIT_EXECUTION"] = "true"
     else:
         os.environ["ALLOW_EXPLOIT_EXECUTION"] = "false"
+    from core.swarm.orchestrator import MARSSwarmManager
+
     manager = MARSSwarmManager(step_callback=step_callback, mode=mode)
     return manager.run_analysis(truncated, osint_data=osint_data)
 
