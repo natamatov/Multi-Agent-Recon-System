@@ -43,7 +43,7 @@ class PompemClient:
         encoded_query = urllib.parse.quote(query)
         url = f"https://packetstormsecurity.com/search/?q={encoded_query}"
         html = self._fetch_html(url)
-        
+
         matches: list[PompemMatch] = []
         # Простой парсинг через регулярные выражения (аналог логики Pompem)
         # Ищем блоки с результатами
@@ -51,7 +51,7 @@ class PompemClient:
         for item in items[:5]:  # Берем первые 5 результатов
             title_match = re.search(r'<dt><a href="(.*?)">(.*?)</a></dt>', item)
             date_match = re.search(r'<dd class="datetime">.*?<a.*?>(\d{4}-\d{2}-\d{2})</a>', item)
-            
+
             if title_match:
                 path, title = title_match.groups()
                 date = date_match.group(1) if date_match else "unknown"
@@ -68,7 +68,7 @@ class PompemClient:
         encoded_query = urllib.parse.quote(query)
         url = f"https://cxsecurity.com/search/wlb/ORD/DESC/1/10/search-word/{encoded_query}/"
         html = self._fetch_html(url)
-        
+
         matches: list[PompemMatch] = []
         # Ищем ссылки на уязвимости
         items = re.findall(r'<h6><a href="(https://cxsecurity.com/issue/WLB-.*?)".*?>(.*?)</a></h6>', html)
@@ -96,7 +96,7 @@ class PompemClient:
                 file_id = file_id_match.group(1)
                 file_name = f"exploit_{file_id}.txt"
                 download_url = f"https://packetstormsecurity.com/files/download/{file_id}/{file_name}"
-                
+
                 try:
                     req = urllib.request.Request(download_url, headers={"User-Agent": self.user_agent})
                     with urllib.request.urlopen(req, timeout=15) as response:
@@ -128,7 +128,7 @@ class PompemClient:
         all_matches = []
         all_matches.extend(self.search_packetstorm(query))
         all_matches.extend(self.search_cxsecurity(query))
-        
+
         return [
             {
                 "title": m.title,
@@ -146,13 +146,13 @@ def lookup_pompem(technologies: list[dict[str, Any]], max_queries: int = 3) -> l
     """
     client = PompemClient()
     results = []
-    
+
     for tech in technologies[:max_queries]:
         name = tech.get("name", "")
         version = tech.get("version", "")
         if not name:
             continue
-            
+
         query = f"{name} {version}".strip()
         found = client.search_all(query)
         if found:
@@ -160,5 +160,5 @@ def lookup_pompem(technologies: list[dict[str, Any]], max_queries: int = 3) -> l
                 "tech": query,
                 "exploits": found
             })
-            
+
     return results

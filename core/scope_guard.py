@@ -8,7 +8,6 @@ import ipaddress
 import os
 import re
 from dataclasses import dataclass
-from urllib.parse import urlparse
 
 from core.config import validate_target_string
 from core.security_mode import parse_bool_env

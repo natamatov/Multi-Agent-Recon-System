@@ -67,16 +67,16 @@ class WAFDetector:
             req = urllib.request.Request(url, headers={"User-Agent": self.user_agent})
             with urllib.request.urlopen(req, timeout=10) as response:
                 headers = {k.lower(): v.lower() for k, v in response.getheaders()}
-                
+
                 # Анализируем заголовки
                 hdr_str = str(headers).lower()
-                
+
                 for provider, sigs in self.WAF_SIGNATURES.items():
                     if any(sig.lower() in hdr_str for sig in sigs):
                         result.detected = True
                         if provider not in result.providers:
                             result.providers.append(provider)
-                
+
                 # Сохраняем важные заголовки для отладки
                 for h in ["server", "via", "x-cache", "x-powered-by"]:
                     if h in headers:
@@ -84,7 +84,7 @@ class WAFDetector:
 
             if result.detected:
                 result.bypass_hints = self.BYPASS_HINTS
-            
+
         except Exception as e:
             # Ошибка может быть вызвана самим WAF (например, 403 Forbidden)
             # В таком случае проверяем заголовки ошибки, если это возможно

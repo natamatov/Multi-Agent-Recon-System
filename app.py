@@ -15,16 +15,16 @@ import pandas as pd
 import streamlit as st
 
 from core.audit_pipeline import run_audit_async, save_reports
-from core.audit_profile import AuditProfile, profile_label
+from core.audit_profile import AuditProfile
 from core.audit_state import is_still_running, load_state, mark_cancelled
 from core.cancel_registry import AuditCancellation
 from core.config import try_load_settings
 from core.dependency_manager import _APT_PACKAGES, check_tools, missing_tools
 from core.export_csv import findings_to_csv
-from core.logger import LOG_FILE, setup_logging, get_logger
+from core.logger import LOG_FILE, get_logger, setup_logging
 from core.report_store import list_recent_audits, load_archived_report
 from core.scope_guard import validate_scope
-from core.security_mode import AuditMode, mode_label, red_team_enabled, resolve_mode
+from core.security_mode import AuditMode, red_team_enabled, resolve_mode
 
 setup_logging()
 log = get_logger("mars.ui")
@@ -104,7 +104,7 @@ def _dashboard_panel() -> None:
     """Авто-обновление истории каждые 30 с."""
     _sync_results()
     state = load_state()
-    thread = st.session_state.get("audit_thread")
+    st.session_state.get("audit_thread")
     running = _is_audit_running()
     current = "running" if running else state.status
     prev = st.session_state.get("_dash_last_status")
@@ -125,7 +125,7 @@ def _render_dashboard() -> None:
 
     cols = st.columns(4)
     total_cve = sum(h.get("cve_count", 0) for h in history)
-    total_ch = sum(h.get("critical_high", 0) for h in history)
+    sum(h.get("critical_high", 0) for h in history)
     cols[0].metric("Аудитов в истории", len(history))
     cols[1].metric("CVE (последние)", history[0].get("cve_count", 0))
     cols[2].metric("Critical+High (последний)", history[0].get("critical_high", 0))

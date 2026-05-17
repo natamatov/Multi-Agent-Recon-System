@@ -15,7 +15,6 @@ from core.rate_limiter import NVD_LIMITER
 
 from .utils import extract_cve_ids
 
-
 NVD_API_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
 
 

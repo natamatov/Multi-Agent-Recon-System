@@ -1,5 +1,5 @@
-import pytest
-from core.utils import extract_host, build_url, merge_unique_cves
+from core.utils import build_url, extract_host, merge_unique_cves
+
 
 def test_extract_host():
     assert extract_host("https://example.com") == "example.com"
@@ -14,7 +14,7 @@ def test_build_url():
 def test_merge_unique_cves():
     list1 = ["CVE-2021-1234", "CVE-2022-5678"]
     list2 = ["CVE-2022-5678", "CVE-2023-9999"]
-    
+
     merged = merge_unique_cves(list1, list2)
     assert len(merged) == 3
     assert "CVE-2021-1234" in merged

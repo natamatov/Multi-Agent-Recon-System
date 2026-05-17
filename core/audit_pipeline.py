@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 from datetime import datetime, timezone
@@ -20,8 +19,8 @@ from core.audit_state import (
     update_progress,
 )
 from core.cancel_registry import (
-    AuditCancelledError,
     AuditCancellation,
+    AuditCancelledError,
     ensure_not_cancelled,
     is_audit_cancelled,
 )
@@ -43,6 +42,7 @@ from core.searchsploit_client import lookup_technologies
 from core.security_mode import AuditMode, exploit_execution_enabled, mode_from_env, mode_label
 from core.shodan_client import run_shodan_recon
 from core.virustotal_client import run_virustotal_recon
+
 log = get_logger("mars.pipeline")
 
 ProgressCallback = Callable[[str], None]

@@ -1,6 +1,7 @@
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
+
 from core.nvd_client import _fetch_cve, enrich_cves_from_text
+
 
 @patch("core.nvd_client.urllib.request.urlopen")
 def test_fetch_cve_success(mock_urlopen):
@@ -18,7 +19,7 @@ def test_fetch_cve_success(mock_urlopen):
             }
         ]
     }'''
-    
+
     # We must mock the context manager return of urlopen
     mock_urlopen.return_value.__enter__.return_value = mock_response
 
@@ -33,7 +34,7 @@ def test_enrich_cves_from_text(mock_urlopen):
     mock_response = MagicMock()
     mock_response.read.return_value = b'{"vulnerabilities": []}' # simulate not found
     mock_urlopen.return_value.__enter__.return_value = mock_response
-    
+
     text = "We found CVE-2021-34527 and CVE-2022-1234 in the logs."
     results = enrich_cves_from_text(text, api_key="dummy")
     assert len(results) == 2

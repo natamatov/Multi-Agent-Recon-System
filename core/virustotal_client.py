@@ -91,8 +91,8 @@ def run_virustotal_recon(target: str, api_key: str | None = None) -> dict[str, A
             "error": "VIRUSTOTAL_API_KEY не задан. Проверка репутации отключена."
         }
 
-    import socket
     import re
+    import socket
 
     # Нормализуем цель (убираем схему)
     clean = re.sub(r"^https?://", "", target.strip()).rstrip("/")

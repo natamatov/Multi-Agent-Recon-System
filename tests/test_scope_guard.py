@@ -1,4 +1,3 @@
-import os
 
 from core.scope_guard import validate_scope
 

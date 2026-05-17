@@ -9,7 +9,6 @@ import asyncio
 import platform
 import socket
 from dataclasses import dataclass
-from typing import Any
 
 
 @dataclass
@@ -45,7 +44,7 @@ async def ping_icmp_async(host: str, count: int = 2, timeout: int = 5) -> PingRe
     Не требует root на большинстве систем.
     """
     ip = _resolve_host(host)
-    
+
     system = platform.system().lower()
     if system == "windows":
         cmd = ["ping", "-n", str(count), "-w", str(timeout * 1000), host]

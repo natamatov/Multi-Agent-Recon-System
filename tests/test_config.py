@@ -1,5 +1,7 @@
 import pytest
+
 from core.config import validate_target_string
+
 
 def test_validate_target_string_valid_ipv4():
     assert validate_target_string("192.168.1.1") == "192.168.1.1"
@@ -18,6 +20,6 @@ def test_validate_target_string_valid_hostname():
 def test_validate_target_string_invalid():
     with pytest.raises(ValueError):
         validate_target_string("http://")
-    
+
     with pytest.raises(ValueError):
         validate_target_string("invalid_host_name!")

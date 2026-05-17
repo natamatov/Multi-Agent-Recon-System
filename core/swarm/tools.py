@@ -5,11 +5,11 @@
 
 from __future__ import annotations
 
-import os
 import subprocess
 
 from core.crewai_compat import tool
 from core.security_mode import parse_bool_env
+
 from ..pompem_client import PompemClient
 
 _BLOCKED_MSG = (

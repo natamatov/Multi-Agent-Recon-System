@@ -150,19 +150,19 @@ def load_settings(env_path: str | None = None) -> Settings:
 def try_load_settings(env_path: str | None = None) -> Settings | None:
     """
     Загружает настройки без завершения процесса (для Streamlit UI).
-    
+
     :return: Settings или None, если ключ не задан / невалиден.
     """
     load_dotenv(dotenv_path=env_path)
     raw_key = os.getenv("CLAUDE_API_KEY")
-    
+
     if not raw_key or not raw_key.strip():
         return None
     key = raw_key.strip()
     placeholders = {"", "your_anthropic_api_key_here", "sk-..."}
     if key.lower() in placeholders or len(key) < 20:
         return None
-        
+
     target = None
     raw_target = os.getenv("TARGET")
     if raw_target and raw_target.strip():
@@ -170,7 +170,7 @@ def try_load_settings(env_path: str | None = None) -> Settings | None:
             target = validate_target_string(raw_target)
         except ValueError:
             target = None # Ignore invalid target in UI, user will type it
-            
+
     shodan_key = os.getenv("SHODAN_API_KEY")
     wpscan_key = os.getenv("WPSCAN_API_KEY")
     vt_key = os.getenv("VIRUSTOTAL_API_KEY")

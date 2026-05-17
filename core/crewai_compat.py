@@ -20,7 +20,6 @@ def get_tool_decorator():
 
         return tool
     except ImportError as first_err:
-        err = first_err
         if "crewai_tools" in str(first_err):
             raise ImportError(_INSTALL_HINT) from first_err
 

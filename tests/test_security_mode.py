@@ -1,6 +1,5 @@
 """Тесты режимов аудита."""
 
-import pytest
 
 from core.security_mode import (
     AuditMode,

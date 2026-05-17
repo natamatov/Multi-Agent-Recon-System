@@ -5,10 +5,11 @@
 from __future__ import annotations
 
 import html
-import markdown
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+import markdown
 
 
 def _severity_class(severity: str, cvss: float | None = None) -> str:
@@ -131,16 +132,16 @@ def _render_nuclei_rows(findings: list[dict[str, Any]]) -> str:
             "</tr>"
         )
     return "\n".join(rows) if rows else "<tr><td colspan='4'>Находок Nuclei нет</td></tr>"
-    
-    
+
+
 def _render_waf_info(waf: dict[str, Any] | None) -> str:
     if not waf or not waf.get("detected"):
         return "<p>Защита WAF/CDN не обнаружена.</p>"
-    
+
     providers = ", ".join(waf.get("providers", []))
     hints = waf.get("hints", [])
     headers = waf.get("relevant_headers", {})
-    
+
     html_output = [
         f"<p><strong>Обнаруженная защита:</strong> <span class='badge high'>{_esc(providers)}</span></p>",
         "<h4>Рекомендации по обходу (Bypass Hints):</h4>",
@@ -149,13 +150,13 @@ def _render_waf_info(waf: dict[str, Any] | None) -> str:
     for hint in hints:
         html_output.append(f"<li>{_esc(hint)}</li>")
     html_output.append("</ul>")
-    
+
     if headers:
         html_output.append("<h4>Заголовки детекции:</h4><ul>")
         for k, v in headers.items():
             html_output.append(f"<li><code>{_esc(k)}:</code> {_esc(v)}</li>")
         html_output.append("</ul>")
-        
+
     return "".join(html_output)
 
 
@@ -168,13 +169,14 @@ def _render_dev_instructions(instructions: list[Any]) -> str:
             title = instr.get("title", f"Шаг {idx}")
             body = instr.get("action", instr.get("description", ""))
             priority = instr.get("priority", "")
-            
+
             # Поддержка markdown в теле инструкции
             parsed_body = markdown.markdown(body, extensions=['extra', 'nl2br']) if body else ""
-            
+
+            badge_html = f" <span class='badge medium'>{_esc(priority)}</span>" if priority else ""
             items.append(
                 f"<li><strong>{_esc(title)}</strong>"
-                f"{f' <span class=\"badge medium\">{_esc(priority)}</span>' if priority else ''}"
+                f"{badge_html}"
                 f"<div class='md-content'>{parsed_body}</div></li>"
             )
         else:
@@ -195,7 +197,7 @@ def generate_html_report(report: dict[str, Any]) -> str:
     timestamp = audit.get("timestamp_utc", datetime.utcnow().isoformat())
     summary_raw = report.get("ai_summary", report.get("summary", ""))
     summary_html = markdown.markdown(summary_raw, extensions=['extra', 'nl2br']) if summary_raw else "<p>Резюме отсутствует.</p>"
-    
+
     technologies = report.get("technologies", [])
     cves = report.get("cves") or report.get("unified_findings", [])
     cve_diff = report.get("cve_diff")
@@ -208,10 +210,10 @@ def generate_html_report(report: dict[str, Any]) -> str:
         )
     nuclei = report.get("nuclei_findings", [])
     waf = report.get("waf")
-    
+
     exploit_data_raw = report.get("exploit_data", "")
     exploit_data_html = markdown.markdown(exploit_data_raw, extensions=['extra', 'nl2br']) if exploit_data_raw else "<p>Эксплойты не верифицированы.</p>"
-    
+
     dev_instructions = report.get("developer_instructions", [])
     nvd_count = sum(1 for c in cves if c.get("nvd_verified") or c.get("verified"))
 
@@ -326,7 +328,7 @@ def generate_html_report(report: dict[str, Any]) -> str:
     h3.diff-new-title {{ color: var(--critical); font-size: 1rem; margin: 1rem 0 0.5rem; }}
     h3.diff-resolved-title {{ color: var(--low); font-size: 1rem; margin: 1.25rem 0 0.5rem; }}
     .muted {{ color: var(--muted); font-size: 0.9rem; }}
-    
+
     /* Стили для скомпилированного Markdown */
     .md-content p {{ margin-bottom: 1rem; }}
     .md-content ul, .md-content ol {{ padding-left: 1.5rem; margin-bottom: 1rem; }}
@@ -447,9 +449,9 @@ def save_html_report(report: dict[str, Any], path: str = "audit_report.html") ->
 def save_pdf_report(report: dict[str, Any], path: str = "audit_report.pdf") -> Path:
     """Конвертирует HTML-отчет в PDF и сохраняет на диск."""
     import pdfkit
-    
+
     html_content = generate_html_report(report)
-    
+
     options = {
         'page-size': 'A4',
         'margin-top': '0.75in',
@@ -459,12 +461,12 @@ def save_pdf_report(report: dict[str, Any], path: str = "audit_report.pdf") -> P
         'encoding': "UTF-8",
         'no-outline': None
     }
-    
+
     out = Path(path)
     try:
         pdfkit.from_string(html_content, str(out), options=options)
         print(f"[OK] PDF-отчёт: {out}")
     except Exception as e:
         print(f"[ERROR] Не удалось создать PDF (убедитесь, что wkhtmltopdf установлен): {e}")
-    
+
     return out

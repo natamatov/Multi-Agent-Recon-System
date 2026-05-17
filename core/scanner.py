@@ -9,12 +9,12 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import Any, Sequence
 
-from core.cancel_registry import AuditCancelledError, AuditCancellation, is_audit_cancelled
 from core.audit_state import update_progress
+from core.cancel_registry import AuditCancellation, AuditCancelledError, is_audit_cancelled
 
 from .nuclei_worker import NucleiScanResult, run_nuclei_scan_async
-from .waf_detector import run_waf_check
 from .utils import build_url, extract_host
+from .waf_detector import run_waf_check
 
 
 @dataclass
@@ -386,7 +386,7 @@ async def run_parallel_scans(
 
     bundle.results.extend([nmap_r, whatweb_r, subfinder_r, wpscan_r, nikto_r, xsstrike_r])
     bundle.nuclei = nuclei_r
-    
+
     print("[*] WAF detection (WebCheck logic)...")
     url = build_url(target)
     bundle.waf = run_waf_check(url)

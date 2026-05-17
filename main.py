@@ -7,15 +7,16 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import sys
 from pathlib import Path
 
 from core.audit_pipeline import run_audit_async, save_reports
 from core.audit_profile import AuditProfile, profile_label
 from core.config import load_settings, validate_target_string
-from core.scope_guard import validate_scope
 from core.dependency_manager import ensure_tools_available
-from core.logger import setup_logging, get_logger
+from core.logger import get_logger, setup_logging
+from core.scope_guard import validate_scope
 from core.security_mode import mode_from_env, mode_label
 
 log = get_logger("mars.cli")

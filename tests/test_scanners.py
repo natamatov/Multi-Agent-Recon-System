@@ -1,7 +1,9 @@
+from unittest.mock import MagicMock, patch
+
 import pytest
-import asyncio
-from unittest.mock import patch, MagicMock
+
 from core.scanner import _run_command_async, run_nmap_async
+
 
 @pytest.mark.asyncio
 @patch("core.scanner.asyncio.create_subprocess_exec")
@@ -13,9 +15,9 @@ async def test_run_command_async_success(mock_exec):
     async def mock_communicate():
         return b"mock stdout", b"mock stderr"
     mock_process.communicate.return_value = mock_communicate()
-    
+
     mock_exec.return_value = mock_process
-    
+
     result = await _run_command_async("test_tool", ["test_tool", "arg1"])
     assert result.success is True
     assert result.stdout == "mock stdout"
@@ -26,7 +28,7 @@ async def test_run_command_async_success(mock_exec):
 @patch("core.scanner._run_command_async")
 async def test_run_nmap_async(mock_run):
     mock_run.return_value = MagicMock(success=True)
-    
+
     await run_nmap_async("example.com")
     mock_run.assert_called_once_with(
         "nmap", ["nmap", "-sV", "-T4", "--open", "-oN", "-", "example.com"], timeout=600
@@ -38,7 +40,7 @@ async def test_run_wpscan_async_no_key(mock_run):
     """WPScan should run without an API key (basic scan)."""
     from core.scanner import run_wpscan_async
     mock_run.return_value = MagicMock(success=True)
-    
+
     await run_wpscan_async("http://example.com")
     args, kwargs = mock_run.call_args
     cmd = args[1]
@@ -51,7 +53,7 @@ async def test_run_wpscan_async_with_key(mock_run):
     """WPScan should include --api-token when key is provided."""
     from core.scanner import run_wpscan_async
     mock_run.return_value = MagicMock(success=True)
-    
+
     await run_wpscan_async("http://example.com", api_key="test-token-123")
     args, kwargs = mock_run.call_args
     cmd = args[1]
