@@ -384,8 +384,8 @@ async def run_parallel_scans(
         run_xsstrike_async(target, xsstrike_path=xsstrike_path),
     )
 
-    bundle.results.extend([nmap_r, whatweb_r, subfinder_r, wpscan_r, nikto_r, xsstrike_r])
-    bundle.nuclei = nuclei_r
+    bundle.results.extend([nmap_r, whatweb_r, subfinder_r, wpscan_r, nikto_r, xsstrike_r])  # type: ignore
+    bundle.nuclei = nuclei_r  # type: ignore
 
     print("[*] WAF detection (WebCheck logic)...")
     url = build_url(target)

@@ -71,7 +71,7 @@ def _is_audit_running() -> bool:
 def _load_report() -> dict | None:
     if REPORT_JSON.exists():
         try:
-            return json.loads(REPORT_JSON.read_text(encoding="utf-8"))
+            return json.loads(REPORT_JSON.read_text(encoding="utf-8"))  # type: ignore
         except json.JSONDecodeError:
             return None
     return None

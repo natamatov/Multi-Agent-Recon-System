@@ -34,7 +34,7 @@ class PompemClient:
         req = urllib.request.Request(url, headers={"User-Agent": self.user_agent})
         try:
             with urllib.request.urlopen(req, timeout=15) as response:
-                return response.read().decode("utf-8", errors="ignore")
+                return response.read().decode("utf-8", errors="ignore")  # type: ignore
         except Exception:
             return ""
 

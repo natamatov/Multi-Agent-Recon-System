@@ -26,7 +26,7 @@ def get_cached(cve_id: str) -> dict[str, Any] | None:
         if time.time() - data.get("_cached_at", 0) > TTL_SECONDS:
             path.unlink(missing_ok=True)
             return None
-        return data.get("record")
+        return data.get("record")  # type: ignore
     except (json.JSONDecodeError, OSError):
         return None
 

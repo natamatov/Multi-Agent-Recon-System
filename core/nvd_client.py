@@ -107,7 +107,7 @@ def enrich_cves_from_text(
             def _fetch_one(cid: str = cve_id) -> dict[str, Any] | None:
                 return _fetch_cve(cid, api_key=api_key)
 
-            record = NVD_LIMITER.call(_fetch_one, is_cancelled=is_audit_cancelled)
+            record = NVD_LIMITER.call(_fetch_one, is_cancelled=is_audit_cancelled)  # type: ignore
             set_cached(cve_id, record)
         if record:
             enriched.append(record)

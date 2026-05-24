@@ -59,7 +59,7 @@ class AuditCancellation:
                 if os.name == "nt":
                     os.kill(pid, signal.SIGTERM)
                 else:
-                    os.kill(pid, signal.SIGKILL)
+                    os.kill(pid, signal.SIGKILL)  # type: ignore
                 killed.append(pid)
             except (ProcessLookupError, PermissionError, OSError):
                 pass

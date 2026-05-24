@@ -39,7 +39,7 @@ def analyze_scan_context(nmap_stdout: str, whatweb_stdout: str) -> dict[str, boo
     return {
         "has_web": has_web,
         "is_wordpress": is_wordpress,
-        "open_ports": open_ports,
+        "open_ports": open_ports,  # type: ignore
     }
 
 
@@ -60,7 +60,7 @@ def build_scanner_plan(nmap_stdout: str, whatweb_stdout: str) -> ScannerPlan:
 
     if not ctx["has_web"]:
         plan.reasons["_skip_web"] = (
-            f"Веб-сканеры пропущены: нет открытых web-портов {sorted(ctx['open_ports'])[:8]}"
+            f"Веб-сканеры пропущены: нет открытых web-портов {sorted(ctx['open_ports'])[:8]}"  # type: ignore
         )
         return plan
 

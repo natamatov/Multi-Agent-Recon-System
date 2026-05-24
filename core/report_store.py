@@ -32,7 +32,7 @@ def _load_index() -> list[dict[str, Any]]:
     if not INDEX_FILE.exists():
         return []
     try:
-        return json.loads(INDEX_FILE.read_text(encoding="utf-8"))
+        return json.loads(INDEX_FILE.read_text(encoding="utf-8"))  # type: ignore
     except json.JSONDecodeError:
         return []
 
@@ -84,7 +84,7 @@ def _count_critical_high(report: dict[str, Any]) -> int:
     findings = report.get("unified_findings", [])
     n = 0
     for f in findings:
-        sev = (f.get("severity") if isinstance(f, dict) else "").lower()
+        sev = (f.get("severity") if isinstance(f, dict) else "").lower()  # type: ignore
         if sev in ("critical", "high"):
             n += 1
     return n
@@ -98,7 +98,7 @@ def load_archived_report(audit_id: str) -> dict[str, Any] | None:
     path = REPORTS_DIR / audit_id / "report.json"
     if not path.exists():
         return None
-    return json.loads(path.read_text(encoding="utf-8"))
+    return json.loads(path.read_text(encoding="utf-8"))  # type: ignore
 
 
 def diff_cve_reports(

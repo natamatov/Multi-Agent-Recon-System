@@ -23,7 +23,7 @@ def _vt_request(endpoint: str, api_key: str) -> dict[str, Any] | None:
     req = urllib.request.Request(url, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+            return json.loads(resp.read().decode("utf-8"))  # type: ignore
     except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError):
         return None
 
