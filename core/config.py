@@ -116,7 +116,7 @@ def load_settings(env_path: str | None = None) -> Settings:
     Загружает .env и возвращает объект Settings после валидации.
     При любой ошибке конфигурации завершает процесс с кодом 1.
     """
-    load_dotenv(dotenv_path=env_path)
+    load_dotenv(dotenv_path=env_path, override=True)
 
     provider, model, api_key, api_base, claude_key = _get_llm_settings()
 
@@ -149,7 +149,7 @@ def try_load_settings(env_path: str | None = None) -> Settings:
     Загружает настройки без завершения процесса (для Streamlit UI).
     Всегда возвращает Settings, чтобы UI мог загрузиться.
     """
-    load_dotenv(dotenv_path=env_path)
+    load_dotenv(dotenv_path=env_path, override=True)
 
     provider, model, api_key, api_base, claude_key = _get_llm_settings()
 
