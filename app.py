@@ -11,6 +11,7 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
+import dotenv
 import pandas as pd
 import streamlit as st
 
@@ -205,6 +206,45 @@ def _sidebar_deps() -> bool:
     return True
 
 
+def _sidebar_llm_config(settings) -> None:
+    st.sidebar.divider()
+    st.sidebar.subheader("⚙️ Настройки LLM")
+    
+    provider_opts = ["anthropic", "openai", "ollama"]
+    
+    curr_provider = getattr(settings, "llm_provider", "anthropic").lower()
+    if curr_provider not in provider_opts:
+        curr_provider = "anthropic"
+        
+    idx = provider_opts.index(curr_provider)
+    provider = st.sidebar.selectbox("Провайдер", provider_opts, index=idx)
+    
+    curr_model = getattr(settings, "llm_model", "")
+    model = st.sidebar.text_input("Модель", value=curr_model, placeholder="claude-3-5-sonnet-20241022, gpt-4o, llama3")
+    
+    curr_key = getattr(settings, "llm_api_key", "")
+    if not curr_key and getattr(settings, "claude_api_key", ""):
+        curr_key = settings.claude_api_key
+        
+    api_key = st.sidebar.text_input("API Key", value=curr_key or "", type="password", help="Необязательно для Ollama")
+    
+    curr_base = getattr(settings, "llm_api_base", "")
+    api_base = st.sidebar.text_input("API Base URL", value=curr_base or "", placeholder="http://localhost:11434")
+    
+    if st.sidebar.button("💾 Сохранить настройки LLM"):
+        env_path = Path(".env")
+        if not env_path.exists():
+            env_path.touch()
+        
+        dotenv.set_key(str(env_path), "LLM_PROVIDER", provider)
+        dotenv.set_key(str(env_path), "LLM_MODEL", model)
+        dotenv.set_key(str(env_path), "LLM_API_KEY", api_key)
+        dotenv.set_key(str(env_path), "LLM_API_BASE", api_base)
+        
+        st.sidebar.success("Настройки сохранены!")
+        st.rerun()
+
+
 def main() -> None:
     _init_session()
     _live_audit_panel()
@@ -216,9 +256,13 @@ def main() -> None:
         st.stop()
 
     settings = try_load_settings()
-    if not settings:
-        st.error("Задайте CLAUDE_API_KEY в .env")
-        st.stop()
+    
+    _sidebar_llm_config(settings)
+    
+    llm_ready = True
+    if settings.llm_provider != "ollama" and not settings.llm_api_key and not getattr(settings, "claude_api_key", None):
+        st.error("Пожалуйста, настройте LLM в боковом меню (укажите API-ключ)")
+        llm_ready = False
 
     st.sidebar.divider()
     st.sidebar.subheader("📋 Scope")
@@ -271,7 +315,7 @@ def main() -> None:
         target = st.text_input("🎯 TARGET", placeholder="https://example.com")
         c1, c2 = st.columns(2)
         with c1:
-            start = st.button("🚀 Запустить", type="primary", disabled=running)
+            start = st.button("🚀 Запустить", type="primary", disabled=running or not llm_ready)
         with c2:
             if st.button("🔄 Статус", disabled=not running):
                 st.rerun()

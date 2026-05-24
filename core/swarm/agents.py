@@ -13,14 +13,47 @@ from .tools import (
 
 def _get_llm_string() -> str:
     """
-    Возвращает строковый идентификатор LLM для CrewAI.
+    Возвращает строковый идентификатор LLM для CrewAI и настраивает ключи.
     """
-    api_key = os.getenv("CLAUDE_API_KEY") or os.getenv("ANTHROPIC_API_KEY")
+    provider = os.getenv("LLM_PROVIDER", "anthropic").strip().lower()
+    model = os.getenv("LLM_MODEL", "").strip()
+    api_key = os.getenv("LLM_API_KEY")
+    api_base = os.getenv("LLM_API_BASE")
+    
+    # Обратная совместимость
     if not api_key:
-        raise ValueError("CLAUDE_API_KEY не задан в .env")
-    os.environ["ANTHROPIC_API_KEY"] = api_key
-    from core.llm_config import CREWAI_MODEL
-    return CREWAI_MODEL
+        api_key = os.getenv("CLAUDE_API_KEY")
+
+    if not model:
+        from core.llm_config import DEFAULT_MODELS
+        model = DEFAULT_MODELS.get(provider, "claude-3-5-sonnet-20241022")
+
+    if provider == "anthropic":
+        if not api_key:
+            raise ValueError("API-ключ для Anthropic не задан")
+        os.environ["ANTHROPIC_API_KEY"] = api_key
+        return f"anthropic/{model}"
+        
+    elif provider == "openai":
+        if not api_key:
+            raise ValueError("API-ключ для OpenAI не задан")
+        os.environ["OPENAI_API_KEY"] = api_key
+        if api_base:
+            os.environ["OPENAI_API_BASE"] = api_base
+        return f"openai/{model}"
+        
+    elif provider == "ollama":
+        if api_base:
+            os.environ["OLLAMA_API_BASE"] = api_base
+        return f"ollama/{model}"
+        
+    else:
+        # Fallback
+        if api_key:
+            os.environ[f"{provider.upper()}_API_KEY"] = api_key
+        if api_base:
+            os.environ[f"{provider.upper()}_API_BASE"] = api_base
+        return f"{provider}/{model}"
 
 
 class SecurityAgents:

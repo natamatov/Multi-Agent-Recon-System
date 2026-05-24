@@ -25,7 +25,7 @@ from core.cancel_registry import (
     is_audit_cancelled,
 )
 from core.config import Settings
-from core.light_analyzer import LightClaudeAnalyzer
+from core.light_analyzer import LightAnalyzer
 from core.log_truncator import truncate_for_ai
 from core.logger import get_logger
 from core.nvd_client import enrich_cves_from_text
@@ -187,11 +187,21 @@ def _run_ai_light(
     settings: Settings,
     on_progress: ProgressCallback,
 ) -> dict[str, Any]:
-    on_progress("AI: один вызов Claude (лёгкий режим)...")
+    on_progress("AI: один вызов LLM (лёгкий режим)...")
     ensure_not_cancelled()
     nmap_log = next((r.stdout for r in bundle.results if r.tool == "nmap"), "")
     whatweb_log = next((r.stdout for r in bundle.results if r.tool == "whatweb"), "")
-    analyzer = LightClaudeAnalyzer(api_key=settings.claude_api_key)
+    
+    provider = getattr(settings, "llm_provider", "anthropic").lower()
+    model = getattr(settings, "llm_model", "claude-3-5-sonnet-20241022")
+    api_key = getattr(settings, "llm_api_key", None)
+    if not api_key:
+        api_key = getattr(settings, "claude_api_key", None)
+    api_base = getattr(settings, "llm_api_base", None)
+    
+    model_str = f"{provider}/{model}"
+    
+    analyzer = LightAnalyzer(model=model_str, api_key=api_key, api_base=api_base)
     return analyzer.analyze(nmap_log, whatweb_log)
 
 

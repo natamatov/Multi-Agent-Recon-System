@@ -1,16 +1,15 @@
 """
-Лёгкий AI-анализ: один вызов Claude без CrewAI.
+Лёгкий AI-анализ: один вызов LLM без CrewAI.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import re
 from typing import Any
 
-from anthropic import Anthropic
-
-from core.llm_config import ANTHROPIC_MODEL
+from litellm import completion
 
 SYSTEM_PROMPT = (
     "Ты — старший инженер-аналитик по безопасности. "
@@ -24,35 +23,51 @@ SYSTEM_PROMPT = (
 )
 
 
-class LightClaudeAnalyzer:
-    """Один запрос к Anthropic API."""
+class LightAnalyzer:
+    """Один запрос к LLM API через LiteLLM."""
 
-    def __init__(self, api_key: str) -> None:
-        self._client = Anthropic(api_key=api_key)
+    def __init__(self, model: str, api_key: str | None = None, api_base: str | None = None) -> None:
+        self.model = model
+        self.api_key = api_key
+        self.api_base = api_base
 
     def analyze(self, nmap_log: str, whatweb_log: str) -> dict[str, Any]:
         user_content = (
             "Верни ТОЛЬКО JSON.\n\n=== NMAP ===\n"
             f"{nmap_log}\n\n=== WHATWEB ===\n{whatweb_log}"
         )
-        response = self._client.messages.create(
-            model=ANTHROPIC_MODEL,
-            max_tokens=4096,
-            system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_content}],
+        
+        kwargs = {}
+        if self.api_key:
+            kwargs["api_key"] = self.api_key
+        if self.api_base:
+            kwargs["api_base"] = self.api_base
+            
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user_content}
+        ]
+        
+        response = completion(
+            model=self.model,
+            messages=messages,
+            **kwargs
         )
-        raw = "".join(
-            b.text for b in response.content if getattr(b, "type", None) == "text"
-        )
-        return self._parse_json(raw)
+        raw = response.choices[0].message.content
+        return self._parse_json(raw or "", self.model)
 
     @staticmethod
-    def _parse_json(raw: str) -> dict[str, Any]:
+    def _parse_json(raw: str, model_name: str) -> dict[str, Any]:
         cleaned = raw.strip()
         fence = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", cleaned)
         if fence:
             cleaned = fence.group(1).strip()
-        data = json.loads(cleaned)
+            
+        try:
+            data = json.loads(cleaned)
+        except json.JSONDecodeError:
+            data = {"summary": "Ошибка парсинга JSON от LLM.", "technologies": [], "cves": []}
+
         return {
             "success": True,
             "technologies": data.get("technologies", []),
@@ -64,9 +79,9 @@ class LightClaudeAnalyzer:
             "sigma_playbook": "",
             "osint_dorking": "",
             "audit_mode": "assessment",
-            "audit_mode_label": "Light VA (single Claude)",
+            "audit_mode_label": f"Light VA ({model_name})",
             "red_team_enabled": False,
             "exploit_execution_enabled": False,
             "final_summary": data.get("summary", ""),
-            "ai_engine": "light_claude",
+            "ai_engine": "light_litellm",
         }

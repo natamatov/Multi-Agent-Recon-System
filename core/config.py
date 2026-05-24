@@ -29,7 +29,11 @@ _HOSTNAME_RE = re.compile(
 @dataclass(frozen=True)
 class Settings:
     """Неизменяемый контейнер проверенных настроек приложения."""
-    claude_api_key: str
+    llm_provider: str
+    llm_model: str
+    llm_api_key: str | None
+    llm_api_base: str | None
+    claude_api_key: str | None
     target: str | None
     shodan_api_key: str | None = None
     wpscan_api_key: str | None = None
@@ -48,29 +52,21 @@ def _fail(message: str) -> None:
     sys.exit(1)
 
 
-def _validate_api_key(key: str | None) -> str:
-    """
-    Проверяет наличие и минимальную длину API-ключа Claude.
-    Пустые и placeholder-значения отклоняются.
-    """
-    if not key or not key.strip():
-        _fail(
-            "Переменная CLAUDE_API_KEY не задана.\n"
-            "Скопируйте .env.example в .env и укажите действующий ключ Anthropic."
-        )
-
-    cleaned = key.strip()
-    placeholders = {
-        "",
-        "your_anthropic_api_key_here",
-        "sk-...",
-    }
-    if cleaned.lower() in placeholders or len(cleaned) < 20:
-        _fail(
-            "CLAUDE_API_KEY выглядит недействительным (слишком короткий или шаблонный).\n"
-            "Укажите реальный ключ в файле .env."
-        )
-    return cleaned
+def _get_llm_settings() -> tuple[str, str, str | None, str | None, str | None]:
+    """Извлекает настройки LLM из окружения."""
+    provider = os.getenv("LLM_PROVIDER", "anthropic").strip().lower()
+    model = os.getenv("LLM_MODEL", "claude-3-5-sonnet-20241022").strip()
+    api_key = os.getenv("LLM_API_KEY")
+    api_base = os.getenv("LLM_API_BASE")
+    claude_key = os.getenv("CLAUDE_API_KEY")
+    
+    # Очистка ключей от плейсхолдеров
+    if api_key and (api_key.strip() == "" or "your_" in api_key):
+        api_key = None
+    if claude_key and (claude_key.strip() == "" or "your_" in claude_key):
+        claude_key = None
+        
+    return provider, model, api_key, api_base, claude_key
 
 
 def validate_target_string(raw: str) -> str:
@@ -119,49 +115,43 @@ def load_settings(env_path: str | None = None) -> Settings:
     """
     Загружает .env и возвращает объект Settings после валидации.
     При любой ошибке конфигурации завершает процесс с кодом 1.
-
-    :param env_path: необязательный путь к .env; по умолчанию — .env в CWD.
     """
     load_dotenv(dotenv_path=env_path)
 
-    api_key = _validate_api_key(os.getenv("CLAUDE_API_KEY"))
+    provider, model, api_key, api_base, claude_key = _get_llm_settings()
+    
+    if provider != "ollama" and not api_key and not claude_key:
+        _fail("API ключ для LLM не задан. Укажите LLM_API_KEY или CLAUDE_API_KEY в .env")
+
     target = _validate_target(os.getenv("TARGET"))
-    shodan_key = os.getenv("SHODAN_API_KEY")
-    wpscan_key = os.getenv("WPSCAN_API_KEY")
-    vt_key = os.getenv("VIRUSTOTAL_API_KEY")
-    net_iface = os.getenv("NETWORK_INTERFACE") or None
-    source_ip = os.getenv("SOURCE_IP") or None
-    http_proxy = os.getenv("HTTP_PROXY") or None
 
     return Settings(
-        claude_api_key=api_key,
+        llm_provider=provider,
+        llm_model=model,
+        llm_api_key=api_key,
+        llm_api_base=api_base,
+        claude_api_key=claude_key,
         target=target,
-        shodan_api_key=shodan_key,
-        wpscan_api_key=wpscan_key,
-        virustotal_api_key=vt_key,
-        network_interface=net_iface,
-        source_ip=source_ip,
-        http_proxy=http_proxy,
+        shodan_api_key=os.getenv("SHODAN_API_KEY"),
+        wpscan_api_key=os.getenv("WPSCAN_API_KEY"),
+        virustotal_api_key=os.getenv("VIRUSTOTAL_API_KEY"),
+        network_interface=os.getenv("NETWORK_INTERFACE") or None,
+        source_ip=os.getenv("SOURCE_IP") or None,
+        http_proxy=os.getenv("HTTP_PROXY") or None,
         xsstrike_path=os.getenv("XSSTRIKE_PATH", "xsstrike"),
         enable_red_team=parse_bool_env("ENABLE_RED_TEAM", default=False),
         allow_exploit_execution=parse_bool_env("ALLOW_EXPLOIT_EXECUTION", default=False),
     )
 
-def try_load_settings(env_path: str | None = None) -> Settings | None:
+
+def try_load_settings(env_path: str | None = None) -> Settings:
     """
     Загружает настройки без завершения процесса (для Streamlit UI).
-
-    :return: Settings или None, если ключ не задан / невалиден.
+    Всегда возвращает Settings, чтобы UI мог загрузиться.
     """
     load_dotenv(dotenv_path=env_path)
-    raw_key = os.getenv("CLAUDE_API_KEY")
-
-    if not raw_key or not raw_key.strip():
-        return None
-    key = raw_key.strip()
-    placeholders = {"", "your_anthropic_api_key_here", "sk-..."}
-    if key.lower() in placeholders or len(key) < 20:
-        return None
+    
+    provider, model, api_key, api_base, claude_key = _get_llm_settings()
 
     target = None
     raw_target = os.getenv("TARGET")
@@ -169,24 +159,21 @@ def try_load_settings(env_path: str | None = None) -> Settings | None:
         try:
             target = validate_target_string(raw_target)
         except ValueError:
-            target = None # Ignore invalid target in UI, user will type it
-
-    shodan_key = os.getenv("SHODAN_API_KEY")
-    wpscan_key = os.getenv("WPSCAN_API_KEY")
-    vt_key = os.getenv("VIRUSTOTAL_API_KEY")
-    net_iface = os.getenv("NETWORK_INTERFACE") or None
-    source_ip = os.getenv("SOURCE_IP") or None
-    http_proxy = os.getenv("HTTP_PROXY") or None
+            target = None
 
     return Settings(
-        claude_api_key=key,
+        llm_provider=provider,
+        llm_model=model,
+        llm_api_key=api_key,
+        llm_api_base=api_base,
+        claude_api_key=claude_key,
         target=target,
-        shodan_api_key=shodan_key,
-        wpscan_api_key=wpscan_key,
-        virustotal_api_key=vt_key,
-        network_interface=net_iface,
-        source_ip=source_ip,
-        http_proxy=http_proxy,
+        shodan_api_key=os.getenv("SHODAN_API_KEY"),
+        wpscan_api_key=os.getenv("WPSCAN_API_KEY"),
+        virustotal_api_key=os.getenv("VIRUSTOTAL_API_KEY"),
+        network_interface=os.getenv("NETWORK_INTERFACE") or None,
+        source_ip=os.getenv("SOURCE_IP") or None,
+        http_proxy=os.getenv("HTTP_PROXY") or None,
         xsstrike_path=os.getenv("XSSTRIKE_PATH", "xsstrike"),
         enable_red_team=parse_bool_env("ENABLE_RED_TEAM", default=False),
         allow_exploit_execution=parse_bool_env("ALLOW_EXPLOIT_EXECUTION", default=False),

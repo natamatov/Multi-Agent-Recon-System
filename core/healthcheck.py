@@ -13,7 +13,7 @@ def run_healthcheck() -> dict[str, Any]:
     return {
         "status": "ok" if tools.get("nmap") and tools.get("whatweb") else "degraded",
         "tools": tools,
-        "claude_key_set": bool(os.getenv("CLAUDE_API_KEY")),
+        "llm_key_set": bool(os.getenv("LLM_API_KEY") or os.getenv("CLAUDE_API_KEY") or os.getenv("LLM_PROVIDER") == "ollama"),
         "shodan_key_set": bool(os.getenv("SHODAN_API_KEY")),
         "nvd_key_set": bool(os.getenv("NVD_API_KEY")),
     }

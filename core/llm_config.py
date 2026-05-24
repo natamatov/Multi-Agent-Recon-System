@@ -1,7 +1,7 @@
-"""Единая конфигурация LLM для README и кода."""
+"""Настройки LLM-провайдеров по умолчанию."""
 
-# CrewAI / LiteLLM (agents.py)
-CREWAI_MODEL = "anthropic/claude-sonnet-4-5"
-
-# Прямой вызов Anthropic API (light_analyzer.py)
-ANTHROPIC_MODEL = "claude-sonnet-4-5-20250929"
+DEFAULT_MODELS = {
+    "anthropic": "claude-3-5-sonnet-20241022",
+    "openai": "gpt-4o",
+    "ollama": "llama3",
+}
