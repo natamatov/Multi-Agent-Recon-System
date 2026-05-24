@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 from typing import Any
 
@@ -36,18 +35,18 @@ class LightAnalyzer:
             "Верни ТОЛЬКО JSON.\n\n=== NMAP ===\n"
             f"{nmap_log}\n\n=== WHATWEB ===\n{whatweb_log}"
         )
-        
+
         kwargs = {}
         if self.api_key:
             kwargs["api_key"] = self.api_key
         if self.api_base:
             kwargs["api_base"] = self.api_base
-            
+
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": user_content}
         ]
-        
+
         response = completion(
             model=self.model,
             messages=messages,
@@ -62,7 +61,7 @@ class LightAnalyzer:
         fence = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", cleaned)
         if fence:
             cleaned = fence.group(1).strip()
-            
+
         try:
             data = json.loads(cleaned)
         except json.JSONDecodeError:

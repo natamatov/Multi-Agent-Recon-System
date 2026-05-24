@@ -191,16 +191,16 @@ def _run_ai_light(
     ensure_not_cancelled()
     nmap_log = next((r.stdout for r in bundle.results if r.tool == "nmap"), "")
     whatweb_log = next((r.stdout for r in bundle.results if r.tool == "whatweb"), "")
-    
+
     provider = getattr(settings, "llm_provider", "anthropic").lower()
     model = getattr(settings, "llm_model", "claude-3-5-sonnet-20241022")
     api_key = getattr(settings, "llm_api_key", None)
     if not api_key:
         api_key = getattr(settings, "claude_api_key", None)
     api_base = getattr(settings, "llm_api_base", None)
-    
+
     model_str = f"{provider}/{model}"
-    
+
     analyzer = LightAnalyzer(model=model_str, api_key=api_key, api_base=api_base)
     return analyzer.analyze(nmap_log, whatweb_log)
 

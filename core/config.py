@@ -59,13 +59,13 @@ def _get_llm_settings() -> tuple[str, str, str | None, str | None, str | None]:
     api_key = os.getenv("LLM_API_KEY")
     api_base = os.getenv("LLM_API_BASE")
     claude_key = os.getenv("CLAUDE_API_KEY")
-    
+
     # Очистка ключей от плейсхолдеров
     if api_key and (api_key.strip() == "" or "your_" in api_key):
         api_key = None
     if claude_key and (claude_key.strip() == "" or "your_" in claude_key):
         claude_key = None
-        
+
     return provider, model, api_key, api_base, claude_key
 
 
@@ -119,7 +119,7 @@ def load_settings(env_path: str | None = None) -> Settings:
     load_dotenv(dotenv_path=env_path)
 
     provider, model, api_key, api_base, claude_key = _get_llm_settings()
-    
+
     if provider != "ollama" and not api_key and not claude_key:
         _fail("API ключ для LLM не задан. Укажите LLM_API_KEY или CLAUDE_API_KEY в .env")
 
@@ -150,7 +150,7 @@ def try_load_settings(env_path: str | None = None) -> Settings:
     Всегда возвращает Settings, чтобы UI мог загрузиться.
     """
     load_dotenv(dotenv_path=env_path)
-    
+
     provider, model, api_key, api_base, claude_key = _get_llm_settings()
 
     target = None
