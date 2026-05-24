@@ -6,7 +6,8 @@
   <p>
     <a href="https://python.org/"><img src="https://img.shields.io/badge/Python-3.10+-blue?style=flat-square&logo=python" alt="Python"></a>
     <a href="#"><img src="https://img.shields.io/badge/CrewAI-Swarm-orange?style=flat-square" alt="CrewAI"></a>
-    <a href="#"><img src="https://img.shields.io/badge/Claude-Sonnet_4.5-purple?style=flat-square" alt="Claude"></a>
+    <a href="#"><img src="https://img.shields.io/badge/LiteLLM-Provider_Agnostic-purple?style=flat-square" alt="LiteLLM"></a>
+    <a href="#"><img src="https://img.shields.io/badge/Ollama-Supported-green?style=flat-square" alt="Ollama"></a>
     <a href="#"><img src="https://img.shields.io/badge/Kali_Linux-Supported-black?style=flat-square&logo=linux" alt="Kali"></a>
     <a href="#"><img src="https://img.shields.io/badge/License-MIT-green?style=flat-square" alt="License"></a>
   </p>
@@ -55,7 +56,7 @@ ALLOW_EXPLOIT_EXECUTION=false  # по умолчанию
 
 | Профиль | Сканеры | AI |
 |---------|---------|-----|
-| **Лёгкий** | nmap + whatweb | 1× Claude API (без CrewAI) |
+| **Лёгкий** | nmap + whatweb | 1× запрос к LLM (без CrewAI) |
 | **Полный** | 8+ инструментов | CrewAI Swarm (до 5 агентов) |
 
 ```bash
@@ -63,9 +64,9 @@ python main.py --profile light   # быстрый VA
 python main.py --profile full    # по умолчанию
 ```
 
-### 🧠 Multi-Agent Swarm (полный профиль)
+### 🧠 Multi-Agent Swarm & Локальные LLM
 
-**Модель:** `anthropic/claude-sonnet-4-5` (CrewAI/LiteLLM) · лёгкий режим: `claude-sonnet-4-5-20250929` (Anthropic API)
+**M.A.R.S.** поддерживает любые модели через `litellm`: Anthropic (Claude), OpenAI (GPT-4), а также **локальные модели через Ollama** (Llama 3, Mistral и др.). Настроить их можно прямо в веб-интерфейсе!
 
 ```
 Parser → Threat Intel → [Red Team*] → SOC Engineer → OSINT Recon
@@ -184,17 +185,20 @@ pip install -r requirements.txt
 
 ```bash
 cp .env.example .env
-nano .env  # Вставьте ваши ключи
 ```
+Вы можете настроить LLM прямо через веб-интерфейс Streamlit (в боковом меню) или прописать вручную:
 
-| Переменная | Обязательно | Описание | Получить |
-|---|---|---|---|
-| `CLAUDE_API_KEY` | **Да** | Anthropic API (Claude 3.5 Sonnet) | [console.anthropic.com](https://console.anthropic.com) |
-| `TARGET` | Нет | IP/домен/URL (можно вводить в UI) | — |
-| `NVD_API_KEY` | Нет | Ускоряет верификацию CVE | [nvd.nist.gov](https://nvd.nist.gov/developers/request-an-api-key) |
-| `SHODAN_API_KEY` | Нет | Пассивный OSINT (порты, уязвимости) | [account.shodan.io](https://account.shodan.io) |
-| `VIRUSTOTAL_API_KEY` | Нет | Репутация по 90+ AV движкам, 500 req/day | [virustotal.com](https://www.virustotal.com) |
-| `WPSCAN_API_KEY` | Нет | CVE в плагинах WordPress, 25 req/day | [wpscan.com](https://wpscan.com/profile) |
+| Переменная | Обязательно | Описание |
+|---|---|---|
+| `LLM_PROVIDER` | **Да** | Провайдер LLM (`anthropic`, `openai`, `ollama`) |
+| `LLM_MODEL` | **Да** | Название модели (например, `llama3`, `gpt-4o`) |
+| `LLM_API_KEY` | Нет* | API-ключ (не нужен для Ollama) |
+| `LLM_API_BASE` | Нет | Базовый URL (например, `http://localhost:11434` для Ollama) |
+| `TARGET` | Нет | IP/домен/URL (можно вводить в UI) |
+| `NVD_API_KEY` | Нет | Ускоряет верификацию CVE |
+| `SHODAN_API_KEY` | Нет | Пассивный OSINT (порты, уязвимости) |
+| `VIRUSTOTAL_API_KEY` | Нет | Репутация по 90+ AV движкам |
+| `WPSCAN_API_KEY` | Нет | CVE в плагинах WordPress |
 | `NETWORK_INTERFACE` | Нет | Интерфейс для nmap (eth0, tun0...) | — |
 | `SOURCE_IP` | Нет | Исходящий IP для nmap | — |
 | `HTTP_PROXY` | Нет | Прокси для веб-сканеров (Burp, SOCKS5) | — |
