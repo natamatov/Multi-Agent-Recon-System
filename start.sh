@@ -59,8 +59,8 @@ while IFS= read -r line || [[ -n "$line" ]]; do
     # Убираем обрамляющие кавычки (одинарные и двойные)
     val="${val#\'}" ; val="${val%\'}"
     val="${val#\"}" ; val="${val%\"}"
-    # Экспортируем только если переменная ещё не задана
-    [[ -z "${!key+x}" ]] && export "$key=$val"
+    # Экспортируем (всегда — .env имеет приоритет)
+    export "$key=$val"
 done < "$ENV_FILE"
 
 LLM_PROVIDER="${LLM_PROVIDER:-anthropic}"
@@ -98,17 +98,19 @@ fi
 
 # ── 6. Ollama / LM Studio: проверка доступности ─────────────
 if [[ "$LLM_PROVIDER" == "ollama" ]]; then
-    OLLAMA_BASE="${LLM_API_BASE:-http://localhost:11434}"
+    # Читаем API_BASE напрямую из .env (надёжнее чем через переменную)
+    _RAW_BASE=$(grep -m1 '^LLM_API_BASE=' "$ENV_FILE" | cut -d'=' -f2- | tr -d "'\"\r\n")
+    OLLAMA_BASE="${_RAW_BASE:-${LLM_API_BASE:-http://localhost:11434}}"
+
     IS_LOCAL=false
     [[ "$OLLAMA_BASE" == *"localhost"* || "$OLLAMA_BASE" == *"127.0.0.1"* ]] && IS_LOCAL=true
 
     echo -e "  LLM endpoint  : ${GRN}${OLLAMA_BASE}${NC}"
 
-    # Извлекаем хост:порт для проверки TCP-доступности
-    OLLAMA_HOST=$(echo "$OLLAMA_BASE" | sed 's|https\?://||' | cut -d'/' -f1)
-
-    if curl -sf --max-time 3 --head "$OLLAMA_BASE" &>/dev/null \
-       || curl -sf --max-time 3 "$(echo "$OLLAMA_BASE" | sed 's|/api.*||')" &>/dev/null; then
+    # Проверяем доступность — пробуем базовый URL без /api пути
+    _BASE_URL=$(echo "$OLLAMA_BASE" | sed 's|/api.*||')
+    if curl -sf --max-time 4 "$_BASE_URL" &>/dev/null \
+    || curl -sf --max-time 4 --head "$OLLAMA_BASE" &>/dev/null; then
         echo -e "  LLM сервер    : ${GRN}доступен ✓${NC}"
     elif $IS_LOCAL; then
         echo -e "${YLW}[!] Ollama не запущен — запускаем в фоне...${NC}"
@@ -117,10 +119,10 @@ if [[ "$LLM_PROVIDER" == "ollama" ]]; then
         if curl -sf --max-time 3 "http://localhost:11434" &>/dev/null; then
             echo -e "  Ollama        : ${GRN}запущен ✓${NC}"
         else
-            echo -e "${RED}[✗] Ollama не отвечает. Запустите: ollama serve${NC}"
+            echo -e "${RED}[✗] Ollama не отвечает. Запустите вручную: ollama serve${NC}"
         fi
     else
-        echo -e "${YLW}[!] LLM сервер (${OLLAMA_HOST}) не ответил — продолжаем запуск.${NC}"
+        echo -e "${YLW}[!] LLM сервер не ответил (${OLLAMA_BASE}) — продолжаем запуск.${NC}"
         echo -e "    Убедитесь что сервер доступен и модель загружена."
     fi
 fi
