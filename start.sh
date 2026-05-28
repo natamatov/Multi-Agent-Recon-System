@@ -45,11 +45,23 @@ if [[ ! -f "$ENV_FILE" ]]; then
     fi
 fi
 
-# ── 2. Загружаем переменные окружения ───────────────────────
-set -a
-# shellcheck disable=SC1090
-source "$ENV_FILE"
-set +a
+# ── 2. Загружаем переменные окружения (безопасный парсинг) ──
+# source .env напрямую опасен — bash пытается выполнить значения
+# как команды (например XSSTRIKE_PATH=/opt/XSStrike/xsstrike.py)
+while IFS= read -r line || [[ -n "$line" ]]; do
+    # Пропускаем комментарии и пустые строки
+    [[ "$line" =~ ^[[:space:]]*# ]] && continue
+    [[ -z "${line// /}" ]] && continue
+    # Берём только строки вида KEY=VALUE
+    [[ "$line" =~ ^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]] || continue
+    key="${BASH_REMATCH[1]}"
+    val="${BASH_REMATCH[2]}"
+    # Убираем обрамляющие кавычки (одинарные и двойные)
+    val="${val#\'}" ; val="${val%\'}"
+    val="${val#\"}" ; val="${val%\"}"
+    # Экспортируем только если переменная ещё не задана
+    [[ -z "${!key+x}" ]] && export "$key=$val"
+done < "$ENV_FILE"
 
 LLM_PROVIDER="${LLM_PROVIDER:-anthropic}"
 LLM_MODEL="${LLM_MODEL:-claude-3-5-sonnet-20241022}"
