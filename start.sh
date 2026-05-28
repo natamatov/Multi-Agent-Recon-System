@@ -96,32 +96,32 @@ if ! python3 -c "import streamlit" &>/dev/null; then
     pip install -r "$MARS_DIR/requirements.txt" --quiet
 fi
 
-# ── 6. Ollama: проверка доступности ─────────────────────────
+# ── 6. Ollama / LM Studio: проверка доступности ─────────────
 if [[ "$LLM_PROVIDER" == "ollama" ]]; then
-    # Определяем endpoint: из LLM_API_BASE или localhost по умолчанию
     OLLAMA_BASE="${LLM_API_BASE:-http://localhost:11434}"
-    # Убираем /api/v1 и подобные суффиксы — нам нужен корень
-    OLLAMA_CHECK="${OLLAMA_BASE%%/api*}/api/tags"
+    IS_LOCAL=false
+    [[ "$OLLAMA_BASE" == *"localhost"* || "$OLLAMA_BASE" == *"127.0.0.1"* ]] && IS_LOCAL=true
 
-    echo -e "  Ollama endpoint: ${GRN}${OLLAMA_BASE}${NC}"
+    echo -e "  LLM endpoint  : ${GRN}${OLLAMA_BASE}${NC}"
 
-    if curl -sf --max-time 3 "$OLLAMA_CHECK" &>/dev/null; then
-        echo -e "  Ollama        : ${GRN}доступен ✓${NC}"
-    else
-        # Удалённый сервер — не пытаемся запустить локально
-        if [[ "$OLLAMA_BASE" == *"localhost"* || "$OLLAMA_BASE" == *"127.0.0.1"* ]]; then
-            echo -e "${YLW}[!] Ollama не запущен — запускаем в фоне...${NC}"
-            ollama serve &>/tmp/ollama_mars.log &
-            sleep 2
-            if curl -sf --max-time 3 "$OLLAMA_CHECK" &>/dev/null; then
-                echo -e "  Ollama        : ${GRN}запущен ✓${NC}"
-            else
-                echo -e "${RED}[✗] Ollama не отвечает. Проверьте: ollama serve${NC}"
-            fi
+    # Извлекаем хост:порт для проверки TCP-доступности
+    OLLAMA_HOST=$(echo "$OLLAMA_BASE" | sed 's|https\?://||' | cut -d'/' -f1)
+
+    if curl -sf --max-time 3 --head "$OLLAMA_BASE" &>/dev/null \
+       || curl -sf --max-time 3 "$(echo "$OLLAMA_BASE" | sed 's|/api.*||')" &>/dev/null; then
+        echo -e "  LLM сервер    : ${GRN}доступен ✓${NC}"
+    elif $IS_LOCAL; then
+        echo -e "${YLW}[!] Ollama не запущен — запускаем в фоне...${NC}"
+        ollama serve &>/tmp/ollama_mars.log &
+        sleep 2
+        if curl -sf --max-time 3 "http://localhost:11434" &>/dev/null; then
+            echo -e "  Ollama        : ${GRN}запущен ✓${NC}"
         else
-            echo -e "${RED}[✗] Удалённый Ollama (${OLLAMA_BASE}) недоступен.${NC}"
-            echo -e "    Проверьте что сервер запущен и порт открыт."
+            echo -e "${RED}[✗] Ollama не отвечает. Запустите: ollama serve${NC}"
         fi
+    else
+        echo -e "${YLW}[!] LLM сервер (${OLLAMA_HOST}) не ответил — продолжаем запуск.${NC}"
+        echo -e "    Убедитесь что сервер доступен и модель загружена."
     fi
 fi
 
