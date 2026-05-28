@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-# M.A.R.S. v2 — Install Script
+# M.A.R.S. v3 — Install Script
 # Устанавливает все CLI-инструменты пайплайна безопасности
 # Поддерживаемые дистрибутивы: Kali Linux, Ubuntu 22.04+, Debian 12+
 # ============================================================
@@ -99,7 +99,7 @@ echo "  ██╔████╔██║███████║█████
 echo "  ██║╚██╔╝██║██╔══██║██╔══██╗╚════██║"
 echo "  ██║ ╚═╝ ██║██║  ██║██║  ██║███████║"
 echo "  ╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝"
-echo -e "  Multi-Agent Recon System — Install Script v2${NC}"
+echo -e "  Multi-Agent Recon System — Install Script v3${NC}"
 echo ""
 
 # Определяем дистрибутив
@@ -350,6 +350,74 @@ else
     fi
 fi
 
+# ── Расширенная разведка v3 ───────────────────────────────────────────────────
+
+log_section "Расширенная разведка v3"
+
+# amass — комплексный ASN/IP/субдомен mapping
+if is_installed "amass"; then
+    log_skip "amass"
+elif apt-get install -y amass &>/dev/null 2>&1; then
+    log_ok "amass (apt)"
+else
+    install_go_tool "amass" "github.com/owasp-amass/amass/v4/...@master"
+fi
+
+# dnsrecon — DNS zone transfer, brute
+install_if_missing "dnsrecon" "dnsrecon"
+
+# CeWL — wordlist из контента сайта
+install_if_missing "cewl" "cewl"
+
+# ── API & SAST v3 ─────────────────────────────────────────────────────────────
+
+log_section "API Discovery & SAST v3"
+
+# kiterunner (kr) — API endpoint brute from openapi/swagger wordlists
+if is_installed "kr"; then
+    log_skip "kiterunner (kr)"
+else
+    log_info "Устанавливаю kiterunner (go install)..."
+    if go install github.com/assetnote/kiterunner/cmd/kr@latest &>/dev/null 2>&1; then
+        for bin_path in "${GOPATH}/bin/kr" "${HOME}/go/bin/kr"; do
+            [[ -f "$bin_path" ]] && install -m 755 "$bin_path" /usr/local/bin/kr && break
+        done
+        is_installed "kr" && log_ok "kiterunner (kr)" || \
+            log_warn "kr установлен но не в PATH (~/go/bin/kr)"
+        # Скачиваем словари Assetnote
+        log_info "Скачиваем словари kiterunner..."
+        mkdir -p /usr/share/kiterunner
+        KR_WL="https://wordlists-cdn.assetnote.io/data/kiterunner/routes-large.kite.tar.gz"
+        if wget -q --timeout=60 "$KR_WL" -O /tmp/kr_wordlist.tar.gz 2>/dev/null; then
+            tar -xzf /tmp/kr_wordlist.tar.gz -C /usr/share/kiterunner/ 2>/dev/null || true
+            log_ok "kiterunner словари"
+        else
+            log_warn "kiterunner словари не скачаны (опционально)"
+        fi
+    else
+        log_error "kiterunner" "go install не удался"
+    fi
+fi
+
+# semgrep — SAST
+if is_installed "semgrep"; then
+    log_skip "semgrep"
+else
+    log_info "Устанавливаю semgrep (pip)..."
+    if pip3 install semgrep &>/dev/null 2>&1; then
+        log_ok "semgrep"
+    else
+        log_warn "semgrep не установлен (опционально)"
+    fi
+fi
+
+# ── Брутфорс (Red Team) ────────────────────────────────────────────────────────
+
+log_section "Брутфорс инструменты (Red Team)"
+
+# hydra — login brute force (только при ENABLE_RED_TEAM=true)
+install_if_missing "hydra" "hydra"
+
 # ── Параметры и эксплойты ─────────────────────────────────────────────────────
 
 log_section "Параметры и эксплойты"
@@ -422,8 +490,10 @@ TOOL_GROUPS["🔴 Ядро (обязательные)"]="nmap whatweb nuclei wkh
 TOOL_GROUPS["⚡ Порт-сканирование"]="rustscan naabu"
 TOOL_GROUPS["🔬 Веб-сканирование"]="nikto ffuf feroxbuster dirb wpscan httpx"
 TOOL_GROUPS["🐛 Уязвимости"]="sqlmap testssl dalfox xsstrike"
-TOOL_GROUPS["🌐 Разведка / OSINT"]="subfinder dnsx gau theHarvester"
+TOOL_GROUPS["🌐 Разведка / OSINT"]="subfinder dnsx gau theHarvester amass dnsrecon"
 TOOL_GROUPS["🔑 Секреты"]="trufflehog gitleaks"
+TOOL_GROUPS["🔌 API / SAST / Wordlist"]="kr semgrep cewl"
+TOOL_GROUPS["🔨 Брутфорс (Red Team)"]="hydra"
 TOOL_GROUPS["🔍 Параметры и эксплойты"]="arjun searchsploit"
 
 CHECK_OK=0
@@ -431,7 +501,8 @@ CHECK_FAIL=0
 CHECK_WARN=0
 
 for group in "🔴 Ядро (обязательные)" "⚡ Порт-сканирование" "🔬 Веб-сканирование" \
-             "🐛 Уязвимости" "🌐 Разведка / OSINT" "🔑 Секреты" "🔍 Параметры и эксплойты"; do
+             "🐛 Уязвимости" "🌐 Разведка / OSINT" "🔑 Секреты" \
+             "🔌 API / SAST / Wordlist" "🔨 Брутфорс (Red Team)" "🔍 Параметры и эксплойты"; do
     echo -e "  ${BOLD}${group}${NC}"
     for tool in ${TOOL_GROUPS[$group]}; do
         if command -v "$tool" &>/dev/null; then

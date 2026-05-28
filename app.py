@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import threading
 import time
 from datetime import datetime
@@ -27,7 +28,7 @@ from core.export_csv import findings_to_csv
 from core.logger import LOG_FILE, get_logger, setup_logging
 from core.report_store import list_recent_audits, load_archived_report
 from core.scope_guard import validate_scope
-from core.security_mode import AuditMode, red_team_enabled, resolve_mode
+from core.security_mode import AuditMode, resolve_mode
 
 setup_logging()
 log = get_logger("mars.ui")
@@ -616,7 +617,7 @@ def _render_results_tab() -> None:
                         st.markdown(f"- `{f.get('id')}`")
 
     # ── Detail tabs
-    r1, r2, r3, r4 = st.tabs(["🐛 Уязвимости", "🤖 AI Анализ", "🌐 OSINT", "🔍 Логи"])
+    r1, r2, r3, r4, r5 = st.tabs(["🐛 Уязвимости", "🎯 MITRE ATT&CK", "🤖 AI Анализ", "🌐 OSINT", "🔍 Логи"])
 
     # ── Tab: Уязвимости
     with r1:
@@ -675,8 +676,58 @@ def _render_results_tab() -> None:
                         if c in df.columns]
                     st.dataframe(df[table_cols], hide_index=True, use_container_width=True)
 
-    # ── Tab: AI Анализ
+    # ── Tab: MITRE ATT&CK
     with r2:
+        attack_summary = report.get("attack_summary", {})
+        attack_md      = report.get("attack_summary_markdown", "")
+
+        if not attack_summary and not attack_md:
+            st.info(
+                "🎯 MITRE ATT&CK сопоставление недоступно для этого отчёта.  \n"
+                "Запустите новый аудит — данные будут добавлены автоматически."
+            )
+        else:
+            # Kill chain coverage
+            covered = attack_summary.get("kill_chain_coverage", [])
+            total_tech = attack_summary.get("total_techniques", 0)
+            mac1, mac2 = st.columns([3, 1])
+            mac1.markdown(f"**Kill chain coverage:** {' → '.join(covered[:6]) or '—'}")
+            mac2.metric("Техник ATT&CK", total_tech)
+            st.markdown("")
+
+            # Tactics breakdown
+            tactics = attack_summary.get("tactics", {})
+            if tactics:
+                st.markdown("#### Тактики")
+                tact_cols = st.columns(min(len(tactics), 5))
+                for i, (tactic, count) in enumerate(list(tactics.items())[:5]):
+                    tact_cols[i % 5].metric(tactic[:18], count)
+                st.markdown("")
+
+            # Techniques table
+            techniques = attack_summary.get("techniques", [])
+            if techniques:
+                st.markdown("#### Техники")
+                for tech in techniques[:20]:
+                    tid    = tech.get("id", "")
+                    tname  = tech.get("name", "")
+                    tactic = tech.get("tactic", "")
+                    url    = tech.get("url", f"https://attack.mitre.org/techniques/{tid.replace('.', '/')}/")
+                    count  = tech.get("count", 0)
+                    st.markdown(
+                        f"[**{tid}**]({url}) {tname} "
+                        f"<span style='color:#94a3b8; font-size:12px'>_{tactic}_</span> "
+                        f"× {count}",
+                        unsafe_allow_html=True,
+                    )
+
+            # Markdown report section
+            if attack_md:
+                with st.expander("📄 ATT&CK Markdown (для отчёта)"):
+                    st.code(attack_md, language="markdown")
+
+    # ── Tab: AI Анализ
+    with r3:
         ai_text = report.get("cve_data", "") or report.get("ai_analysis", "")
         if ai_text:
             st.markdown(ai_text)
@@ -689,7 +740,7 @@ def _render_results_tab() -> None:
                 st.json(nvd_list[:25])
 
     # ── Tab: OSINT
-    with r3:
+    with r4:
         osint_keys = [k for k in report if k in
             ("shodan_data", "virustotal_data", "subfinder_data", "osint", "osint_data")]
         if osint_keys:
@@ -704,7 +755,7 @@ def _render_results_tab() -> None:
             )
 
     # ── Tab: Логи
-    with r4:
+    with r5:
         raw = report.get("raw_scan_logs", "") or st.session_state.get("raw_logs", "")
         if raw:
             display = raw[-12000:] if len(raw) > 12000 else raw
@@ -794,8 +845,8 @@ def _render_history_tab() -> None:
 def _render_settings_tab(settings) -> None:
     st.markdown("### ⚙️ Настройки")
 
-    s_llm, s_osint, s_deps, s_scope = st.tabs(
-        ["🤖 LLM провайдер", "🌐 OSINT ключи", "🔧 Зависимости", "📋 Scope"]
+    s_llm, s_osint, s_notify, s_deps, s_scope = st.tabs(
+        ["🤖 LLM провайдер", "🌐 OSINT ключи", "🔔 Уведомления", "🔧 Зависимости", "📋 Scope"]
     )
 
     # ── LLM
@@ -890,6 +941,80 @@ def _render_settings_tab(settings) -> None:
             if wpscan_key:
                 dotenv.set_key(str(env_path), "WPSCAN_API_TOKEN", wpscan_key)
             st.success("✅ Сохранено.")
+
+    # ── Notifications
+    with s_notify:
+        st.markdown("#### 🔔 Уведомления после аудита")
+        st.info(
+            "M.A.R.S. может отправлять сводку результатов в Telegram и Slack  \n"
+            "сразу после завершения аудита. Без ключей — уведомления отключены."
+        )
+        n1, n2 = st.columns(2)
+        with n1:
+            st.markdown("**Telegram**")
+            tg_token = st.text_input(
+                "Bot Token",
+                type="password",
+                value=os.getenv("TELEGRAM_BOT_TOKEN", ""),
+                placeholder="1234567890:AABBCCxxx",
+                help="Получить у @BotFather в Telegram",
+                key="tg_token_input",
+            )
+            tg_chat = st.text_input(
+                "Chat ID / @channel",
+                value=os.getenv("TELEGRAM_CHAT_ID", ""),
+                placeholder="-100123456789  или  @mychannel",
+                help="Узнать через @userinfobot",
+                key="tg_chat_input",
+            )
+        with n2:
+            st.markdown("**Slack**")
+            slack_wh = st.text_input(
+                "Incoming Webhook URL",
+                type="password",
+                value=os.getenv("SLACK_WEBHOOK_URL", ""),
+                placeholder="https://hooks.slack.com/services/...",
+                help="Slack App → Incoming Webhooks → Add New Webhook",
+                key="slack_wh_input",
+            )
+
+        if st.button("💾 Сохранить настройки уведомлений"):
+            env_path = Path(".env")
+            if not env_path.exists():
+                env_path.touch()
+            if tg_token:
+                dotenv.set_key(str(env_path), "TELEGRAM_BOT_TOKEN", tg_token)
+            if tg_chat:
+                dotenv.set_key(str(env_path), "TELEGRAM_CHAT_ID", tg_chat)
+            if slack_wh:
+                dotenv.set_key(str(env_path), "SLACK_WEBHOOK_URL", slack_wh)
+            st.success("✅ Сохранено. Уведомления будут отправляться после следующего аудита.")
+
+        # Test button
+        if st.button("📨 Тест уведомления (нужен активный отчёт)"):
+            _test_report = st.session_state.audit_result or _load_report()
+            if _test_report:
+                from core.integrations.notify import notify_audit_completed
+                results = asyncio.run(notify_audit_completed(
+                    _test_report,
+                    telegram_token=tg_token or None,
+                    telegram_chat_id=tg_chat or None,
+                    slack_webhook=slack_wh or None,
+                ))
+                tg_ok = results.get("telegram", False)
+                sl_ok = results.get("slack", False)
+                if tg_ok:
+                    st.success("✅ Telegram: отправлено!")
+                elif tg_token:
+                    st.error("❌ Telegram: ошибка отправки")
+                if sl_ok:
+                    st.success("✅ Slack: отправлено!")
+                elif slack_wh:
+                    st.error("❌ Slack: ошибка отправки")
+                if not tg_token and not slack_wh:
+                    st.warning("Заполните хотя бы одну интеграцию выше")
+            else:
+                st.warning("Нет отчёта для тестирования — сначала запустите аудит")
 
     # ── Dependencies
     with s_deps:

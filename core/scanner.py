@@ -518,6 +518,154 @@ async def run_xsstrike_async(target: str, timeout: int = 600, xsstrike_path: str
     return await _run_command_async("xsstrike", command, timeout=timeout)
 
 
+# ─── NEW TOOLS v3 ─────────────────────────────────────────────────────────────
+
+async def run_amass_async(target: str, timeout: int = 300) -> ScanResult:
+    """
+    amass: комплексное сопоставление поверхности атаки.
+    Субдомены, ASN-блоки, связанные IP через 20+ пассивных источников.
+    Лучше subfinder для корпоративных сетей.
+    """
+    host = extract_host(target)
+    command = [
+        "amass", "enum",
+        "-passive",          # пассивный режим — не касаемся цели напрямую
+        "-d", host,
+        "-timeout", "5",     # максимум 5 минут
+        "-silent",
+    ]
+    return await _run_command_async("amass", command, timeout=timeout)
+
+
+async def run_dnsrecon_async(target: str, timeout: int = 120) -> ScanResult:
+    """
+    dnsrecon: DNS zone transfer, cache snooping, brute-force субдоменов.
+    Особенно эффективен при неправильно настроенном DNS (zone transfer открыт).
+    """
+    host = extract_host(target)
+    command = [
+        "dnsrecon",
+        "-d", host,
+        "-t", "std,axfr,bing",   # стандарт + попытка zone transfer + Bing enum
+        "--json", "/tmp/dnsrecon_mars.json",
+    ]
+    return await _run_command_async("dnsrecon", command, timeout=timeout)
+
+
+async def run_cewl_async(target: str, timeout: int = 180) -> ScanResult:
+    """
+    CeWL: генерирует кастомный wordlist из содержимого сайта.
+    Слова из контента → используются для password spraying, dir brute.
+    """
+    url = build_url(target)
+    command = [
+        "cewl",
+        url,
+        "-d", "2",                       # глубина обхода
+        "-m", "5",                       # минимальная длина слова
+        "-w", "/tmp/cewl_mars_wordlist.txt",
+        "--lowercase",
+    ]
+    return await _run_command_async("cewl", command, timeout=timeout)
+
+
+async def run_kiterunner_async(target: str, timeout: int = 300) -> ScanResult:
+    """
+    kiterunner (kr): бруте API эндпоинтов из openapi/swagger словарей.
+    Идеален для REST API целей — находит скрытые /api/v1/..., /graphql, /swagger.
+    """
+    import os as _os
+    url = build_url(target)
+    # Словарь: предпочитаем routes-large от Assetnote
+    wordlists = [
+        "/usr/share/kiterunner/routes-large.kite",
+        "/opt/kiterunner/routes-large.kite",
+        "routes-large.kite",
+    ]
+    wordlist = next((w for w in wordlists if _os.path.exists(w)), wordlists[0])
+    command = [
+        "kr", "scan",
+        url,
+        "-w", wordlist,
+        "--max-connection-per-host", "5",
+        "--delay", "100ms",
+        "--fail-status-codes", "400,401,403,404,429,500,501,502,503",
+        "--output", "text",
+    ]
+    return await _run_command_async("kiterunner", command, timeout=timeout)
+
+
+async def run_semgrep_async(target: str, timeout: int = 300) -> ScanResult:
+    """
+    semgrep: SAST — статический анализ исходного кода на паттерны уязвимостей.
+    Используется если цель — git-репозиторий или локальный путь к коду.
+    """
+    import os as _os
+
+    # Определяем путь: локальная директория или URL репо
+    if _os.path.isdir(target):
+        scan_path = target
+    elif _os.path.isdir("/tmp/semgrep_repo"):
+        scan_path = "/tmp/semgrep_repo"
+    else:
+        return ScanResult(
+            tool="semgrep",
+            command=[],
+            success=False,
+            error_message="semgrep: цель не является локальной директорией",
+        )
+
+    command = [
+        "semgrep",
+        "--config=auto",           # автоматически подбирает правила по языку
+        "--json",
+        "--output=/tmp/semgrep_mars.json",
+        "--quiet",
+        "--metrics=off",
+        scan_path,
+    ]
+    return await _run_command_async("semgrep", command, timeout=timeout)
+
+
+async def run_hydra_async(
+    target: str,
+    service: str = "ssh",
+    timeout: int = 300,
+    wordlist: str = "/usr/share/wordlists/rockyou.txt",
+) -> ScanResult:
+    """
+    Hydra: брутфорс логинов сервисов (SSH, FTP, HTTP-Form, SMB и др.).
+    Только для авторизованного тестирования! Требует ENABLE_RED_TEAM=true.
+    service: ssh, ftp, smb, rdp, http-form-post
+    """
+    import os as _os
+    if not _os.getenv("ENABLE_RED_TEAM", "").lower() in ("1", "true", "yes"):
+        return ScanResult(
+            tool="hydra",
+            command=[],
+            success=False,
+            error_message="hydra отключён: требует ENABLE_RED_TEAM=true",
+        )
+
+    host = extract_host(target)
+    # Стандартный список пользователей для тестирования
+    user_list = "/usr/share/seclists/Usernames/top-usernames-shortlist.txt"
+    if not _os.path.exists(user_list):
+        user_list = "admin"   # базовый фолбэк
+
+    command = [
+        "hydra",
+        "-L", user_list,
+        "-P", wordlist,
+        "-t", "4",           # 4 потока (бережно)
+        "-f",                # останавливаться на первом успехе
+        "-w", "10",          # таймаут ожидания ответа (10 сек)
+        host,
+        service,
+    ]
+    return await _run_command_async("hydra", command, timeout=timeout)
+
+
 async def run_light_scans(
     target: str,
     *,
@@ -577,6 +725,8 @@ async def run_smart_scans(
         recon_coros.append(run_theharvester_async(target))
     if _shutil.which("gau"):
         recon_coros.append(run_gau_async(target))
+    if _shutil.which("dnsrecon"):
+        recon_coros.append(run_dnsrecon_async(target))
 
     recon_results = await asyncio.gather(*recon_coros)
     port_r, whatweb_r, subfinder_r = recon_results[0], recon_results[1], recon_results[2]
@@ -613,6 +763,9 @@ async def run_smart_scans(
     if "wpscan"      in plan.web: _add("wpscan",       run_wpscan_async(target, api_key=wpscan_api_key))
     if "xsstrike"    in plan.web: _add("xsstrike",     run_xsstrike_async(target, xsstrike_path=xsstrike_path))
     if "trufflehog"  in plan.web: _add("trufflehog",  run_trufflehog_async(target))
+    if "semgrep"     in plan.web: _add("semgrep",     run_semgrep_async(target))
+    if "kiterunner"  in plan.web: _add("kiterunner",  run_kiterunner_async(target))
+    if "cewl"        in plan.web: _add("cewl",         run_cewl_async(target))
 
     phase2a_results = await asyncio.gather(*phase2a_tasks) if phase2a_tasks else []
     for name, res in zip(phase2a_names, phase2a_results):
@@ -636,12 +789,21 @@ async def run_smart_scans(
         if subdomains:
             phase2b.append(run_httpx_async(subdomains[:50]))  # лимит 50
 
+    # amass — дополнительная субдомен-разведка (запускаем в фазе 2 из-за времени)
+    if _shutil.which("amass"):
+        phase2b.append(run_amass_async(target))
+
     if phase2b:
         extra = await asyncio.gather(*phase2b)
         bundle.results.extend(extra)
 
     bundle.waf = run_waf_check(build_url(target))
     return bundle
+
+
+async def _skip_scan(tool: str) -> ScanResult:
+    """Placeholder для инструментов не установленных в системе."""
+    return ScanResult(tool=tool, command=[], success=False, error_message="not installed")
 
 
 async def run_parallel_scans(
@@ -677,9 +839,9 @@ async def run_parallel_scans(
         run_dalfox_async(target),
         run_sqlmap_async(target),
         run_gau_async(target),
-        run_theharvester_async(target) if _shutil.which("theHarvester") else asyncio.sleep(0),
-        run_trufflehog_async(target)   if _shutil.which("trufflehog")   else asyncio.sleep(0),
-        run_arjun_async(target)        if _shutil.which("arjun")        else asyncio.sleep(0),
+        run_theharvester_async(target) if _shutil.which("theHarvester") else _skip_scan("theHarvester"),
+        run_trufflehog_async(target)   if _shutil.which("trufflehog")   else _skip_scan("trufflehog"),
+        run_arjun_async(target)        if _shutil.which("arjun")        else _skip_scan("arjun"),
     )
 
     port_r, whatweb_r, nuclei_r, subfinder_r, wpscan_r, nikto_r, testssl_r, \
@@ -691,7 +853,8 @@ async def run_parallel_scans(
         if isinstance(r, ScanResult):
             bundle.results.append(r)
     for r in optional_r:
-        if isinstance(r, ScanResult):
+        # _skip_scan stubs have command=[] — skip tools that were not installed
+        if isinstance(r, ScanResult) and r.command:
             bundle.results.append(r)
 
     bundle.waf = run_waf_check(build_url(target))

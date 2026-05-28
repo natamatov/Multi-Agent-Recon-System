@@ -37,10 +37,19 @@ EXTENDED_TOOLS: tuple[str, ...] = (
     "theHarvester",
     "httpx",
     "gau",
+    # v3: Расширенная разведка
+    "amass",
+    "dnsrecon",
     # Секреты
     "trufflehog",
     # Параметры
     "arjun",
+    # v3: API / SAST
+    "kr",
+    "semgrep",
+    "cewl",
+    # v3: Брутфорс (Red Team)
+    "hydra",
     # Эксплойты
     "searchsploit",
 )
@@ -77,10 +86,19 @@ _APT_PACKAGES: dict[str, str] = {
     "theHarvester":  "theharvester",
     "httpx":         "httpx",
     "gau":           "gau",
+    # v3: Extended recon
+    "amass":         "amass",
+    "dnsrecon":      "dnsrecon",
     # Secrets
     "trufflehog":    "trufflehog",
     # Params
     "arjun":         "python3-arjun",
+    # v3: API / SAST / wordlist
+    "kr":            "go install github.com/assetnote/kiterunner/cmd/kr@latest",
+    "semgrep":       "pip install semgrep",
+    "cewl":          "cewl",
+    # v3: Bruteforce (Red Team)
+    "hydra":         "hydra",
     # Exploits
     "searchsploit":  "exploitdb",
     # Built-in
@@ -94,9 +112,11 @@ TOOL_CATEGORIES: dict[str, list[str]] = {
     "⚡ Порт-скан":           ["rustscan", "naabu"],
     "🔬 Веб-сканирование":    ["nikto", "ffuf", "feroxbuster", "dirb", "wpscan"],
     "🐛 Уязвимости":          ["sqlmap", "testssl", "dalfox", "xsstrike"],
-    "🌐 Разведка":            ["subfinder", "theHarvester", "httpx", "gau"],
+    "🌐 Разведка":            ["subfinder", "theHarvester", "httpx", "gau", "amass", "dnsrecon"],
     "🔑 Секреты":             ["trufflehog"],
     "🔍 Параметры":           ["arjun"],
+    "🔌 API / SAST":          ["kr", "semgrep", "cewl"],
+    "🔨 Брутфорс (RedTeam)":  ["hydra"],
     "💣 Эксплойты":           ["searchsploit"],
     "⚙️  Встроенные":         ["pompem", "webcheck"],
 }

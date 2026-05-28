@@ -21,6 +21,7 @@ HTTPS_MARKERS     = ("https", ":443", ":8443", "ssl", "tls")
 FORMS_MARKERS     = ("form", "login", "search", "query", "q=", "id=", "user", "password", "signup")
 GITHUB_MARKERS    = ("github.com", "gitlab.com", "bitbucket.org")
 API_MARKERS       = ("api", "graphql", "rest", "swagger", "openapi", "json", "v1", "v2")
+SSH_FTP_MARKERS   = ("22/tcp", "21/tcp", "3389/tcp", "ftp", "openssh", "ftpd")
 
 
 @dataclass
@@ -61,6 +62,7 @@ def analyze_scan_context(nmap_stdout: str, whatweb_stdout: str) -> dict:
     has_forms    = any(m in combined for m in FORMS_MARKERS)
     is_github    = any(m in combined for m in GITHUB_MARKERS)
     is_api       = any(m in combined for m in API_MARKERS)
+    has_ssh_ftp  = any(m in combined for m in SSH_FTP_MARKERS)
 
     # Определяем тип приложения
     app_type = "generic"
@@ -78,6 +80,7 @@ def analyze_scan_context(nmap_stdout: str, whatweb_stdout: str) -> dict:
         "has_forms":    has_forms,
         "is_github":    is_github,
         "is_api":       is_api,
+        "has_ssh_ftp":  has_ssh_ftp,
         "app_type":     app_type,
         "open_ports":   open_ports,
     }
@@ -115,6 +118,14 @@ def build_scanner_plan(nmap_stdout: str, whatweb_stdout: str) -> ScannerPlan:
     if _available("gau"):
         plan.always.append("gau")
         plan.reasons["gau"] = "архивные URL из Wayback Machine / CommonCrawl"
+    # amass — глубже subfinder, дольше
+    if _available("amass"):
+        plan.always.append("amass")
+        plan.reasons["amass"] = "комплексный ASN/IP/субдомен mapping (20+ источников)"
+    # dnsrecon — всегда полезен
+    if _available("dnsrecon"):
+        plan.always.append("dnsrecon")
+        plan.reasons["dnsrecon"] = "DNS zone transfer, записи SPF/DMARC, поддомены"
 
     # ── Нет веба — возвращаем базовый план ───────────────────────────────────
     if not ctx["has_web"]:
@@ -171,5 +182,18 @@ def build_scanner_plan(nmap_stdout: str, whatweb_stdout: str) -> ScannerPlan:
     if ctx["is_github"] and _available("trufflehog"):
         plan.web.append("trufflehog")
         plan.reasons["trufflehog"] = "утёкшие секреты в репозитории"
+    if ctx["is_github"] and _available("semgrep"):
+        plan.web.append("semgrep")
+        plan.reasons["semgrep"] = "SAST: статический анализ кода из репозитория"
+
+    # ── API endpoints brute (REST/GraphQL) ────────────────────────────────────
+    if ctx["is_api"] and _available("kr"):
+        plan.web.append("kiterunner")
+        plan.reasons["kiterunner"] = "API route discovery из openapi/swagger словарей"
+
+    # ── CeWL — кастомный wordlist для dir-brute ───────────────────────────────
+    if ctx["has_web"] and _available("cewl"):
+        plan.web.append("cewl")
+        plan.reasons["cewl"] = "wordlist из контента сайта для dir-brute / password spray"
 
     return plan

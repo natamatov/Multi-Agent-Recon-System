@@ -27,6 +27,8 @@ from core.cancel_registry import (
 from core.config import Settings
 from core.epss_client import enrich_findings_with_epss, get_epss_scores, prioritize_findings
 from core.greynoise_client import interpret_greynoise, run_greynoise_recon
+from core.integrations.notify import notify_audit_completed
+from core.mitre_mapper import attack_summary_markdown, build_attack_summary, enrich_findings_with_attack
 from core.light_analyzer import LightAnalyzer
 from core.log_truncator import truncate_for_ai
 from core.logger import get_logger
@@ -302,10 +304,7 @@ async def run_audit_async(
                 progress("OSINT: GreyNoise IP classification...")
                 ensure_not_cancelled()
                 try:
-                    import asyncio as _aio
-                    greynoise_res = _aio.get_event_loop().run_until_complete(
-                        run_greynoise_recon(target, settings.greynoise_api_key)
-                    )
+                    greynoise_res = await run_greynoise_recon(target, settings.greynoise_api_key)
                     osint_data += (
                         f"GREYNOISE:\n"
                         f"{interpret_greynoise(greynoise_res)}\n"
@@ -342,10 +341,7 @@ async def run_audit_async(
         epss_scores: dict[str, Any] = {}
         if all_cve_ids:
             try:
-                import asyncio as _aio
-                epss_scores = _aio.get_event_loop().run_until_complete(
-                    get_epss_scores(all_cve_ids)
-                )
+                epss_scores = await get_epss_scores(all_cve_ids)
                 log.info("EPSS: получено %d scores для %d CVE", len(epss_scores), len(all_cve_ids))
             except Exception as exc:
                 log.warning("EPSS ошибка: %s", exc)
@@ -384,6 +380,33 @@ async def run_audit_async(
             report["unified_findings"] = prioritize_findings(report["unified_findings"])
             log.info("EPSS: %d findings приоритизировано", len(report["unified_findings"]))
         report["epss_scores"] = epss_scores
+
+        # ── MITRE ATT&CK mapping ───────────────────────────────────────────────
+        if report.get("unified_findings"):
+            progress("MITRE ATT&CK: сопоставление техник...")
+            report["unified_findings"] = enrich_findings_with_attack(report["unified_findings"])
+            attack_summary = build_attack_summary(report["unified_findings"])
+            report["attack_summary"]          = attack_summary
+            report["attack_summary_markdown"] = attack_summary_markdown(attack_summary)
+            log.info(
+                "MITRE: %d техник, тактики: %s",
+                attack_summary.get("total_techniques", 0),
+                ", ".join(attack_summary.get("kill_chain_coverage", [])[:4]),
+            )
+
+        # ── Уведомления ────────────────────────────────────────────────────────
+        notify_cfg = {
+            "telegram_token":   os.getenv("TELEGRAM_BOT_TOKEN"),
+            "telegram_chat_id": os.getenv("TELEGRAM_CHAT_ID"),
+            "slack_webhook":    os.getenv("SLACK_WEBHOOK_URL"),
+        }
+        if any(notify_cfg.values()):
+            progress("Отправка уведомлений...")
+            try:
+                await notify_audit_completed(report, **notify_cfg)
+            except Exception as exc:
+                log.warning("Уведомления: ошибка: %s", exc)
+
         mark_completed("Аудит завершён", report_ready=True)
         log.info("Аудит завершён: target=%s profile=%s", target, profile.value)
         return report
