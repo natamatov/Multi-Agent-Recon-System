@@ -3,7 +3,6 @@ anthropic>=0.39.0
 streamlit>=1.33.0
 pandas>=2.0.0
 crewai[tools]>=0.28.0
-# crewai-tools: отдельный пакет только для crewai < 1.0; в 1.x tool встроен в crewai.tools
 langchain-anthropic>=0.1.4
 litellm>=1.0.0
 pdfkit>=1.0.0
@@ -12,3 +11,6 @@ pytest-asyncio>=0.23.0
 
 shodan>=1.30.0
 markdown>=3.4.0
+
+# v2: async HTTP client для EPSS API и GreyNoise API
+httpx>=0.27.0

@@ -1,6 +1,6 @@
 """
-Управление системными зависимостями (утилиты Kali Linux).
-Проверка через utils.is_tool_available с интерактивной паузой.
+Управление системными зависимостями M.A.R.S. v2.
+Проверяет наличие всех CLI-инструментов пайплайна.
 """
 
 from __future__ import annotations
@@ -8,81 +8,152 @@ from __future__ import annotations
 import shutil
 from typing import Iterable
 
-# Утилиты пайплайна
-DEFAULT_REQUIRED_TOOLS: tuple[str, ...] = ("nmap", "whatweb", "dirb", "nuclei", "searchsploit", "wkhtmltopdf", "subfinder", "wpscan", "nikto", "ffuf", "pompem", "webcheck")
+# ── Ядро (обязательные) ───────────────────────────────────────────────────────
+CORE_TOOLS: tuple[str, ...] = (
+    "nmap",
+    "whatweb",
+    "nuclei",
+    "wkhtmltopdf",
+)
 
-# Подсказки для apt в Kali/Debian
+# ── Расширенные (желательные, но не обязательные) ─────────────────────────────
+EXTENDED_TOOLS: tuple[str, ...] = (
+    # Быстрый порт-скан
+    "rustscan",
+    "naabu",
+    # Веб-сканирование
+    "nikto",
+    "ffuf",
+    "feroxbuster",
+    "dirb",
+    "wpscan",
+    # Уязвимости
+    "sqlmap",
+    "testssl",
+    "dalfox",
+    "xsstrike",
+    # Разведка
+    "subfinder",
+    "theHarvester",
+    "httpx",
+    "gau",
+    # Секреты
+    "trufflehog",
+    # Параметры
+    "arjun",
+    # Эксплойты
+    "searchsploit",
+)
+
+# Все для отображения в UI
+DEFAULT_REQUIRED_TOOLS: tuple[str, ...] = CORE_TOOLS + EXTENDED_TOOLS + (
+    "pompem",
+    "webcheck",
+)
+
+# apt-пакеты для каждого инструмента
 _APT_PACKAGES: dict[str, str] = {
-    "nmap": "nmap",
-    "whatweb": "whatweb",
-    "dirb": "dirb",
-    "nuclei": "nuclei",
-    "searchsploit": "exploitdb",
-    "wkhtmltopdf": "wkhtmltopdf",
-    "subfinder": "subfinder",
-    "wpscan": "wpscan",
-    "nikto": "nikto",
-    "ffuf": "ffuf",
-    "pompem": "Встроено (M.A.R.S. Exploit Client)",
-    "webcheck": "Встроено (M.A.R.S. WAF Detector)",
+    # Core
+    "nmap":          "nmap",
+    "whatweb":       "whatweb",
+    "nuclei":        "nuclei",
+    "wkhtmltopdf":   "wkhtmltopdf",
+    # Port scan
+    "rustscan":      "rustscan",
+    "naabu":         "naabu",
+    # Web
+    "nikto":         "nikto",
+    "ffuf":          "ffuf",
+    "feroxbuster":   "feroxbuster",
+    "dirb":          "dirb",
+    "wpscan":        "wpscan",
+    # Vulnerabilities
+    "sqlmap":        "sqlmap",
+    "testssl":       "testssl.sh",
+    "dalfox":        "dalfox",
+    "xsstrike":      "xsstrike",
+    # Recon
+    "subfinder":     "subfinder",
+    "theHarvester":  "theharvester",
+    "httpx":         "httpx",
+    "gau":           "gau",
+    # Secrets
+    "trufflehog":    "trufflehog",
+    # Params
+    "arjun":         "python3-arjun",
+    # Exploits
+    "searchsploit":  "exploitdb",
+    # Built-in
+    "pompem":        "Встроено (M.A.R.S. Exploit Client)",
+    "webcheck":      "Встроено (M.A.R.S. WAF Detector)",
 }
 
+# Категории для красивого отображения в UI
+TOOL_CATEGORIES: dict[str, list[str]] = {
+    "🔴 Ядро (обязательные)": list(CORE_TOOLS),
+    "⚡ Порт-скан":           ["rustscan", "naabu"],
+    "🔬 Веб-сканирование":    ["nikto", "ffuf", "feroxbuster", "dirb", "wpscan"],
+    "🐛 Уязвимости":          ["sqlmap", "testssl", "dalfox", "xsstrike"],
+    "🌐 Разведка":            ["subfinder", "theHarvester", "httpx", "gau"],
+    "🔑 Секреты":             ["trufflehog"],
+    "🔍 Параметры":           ["arjun"],
+    "💣 Эксплойты":           ["searchsploit"],
+    "⚙️  Встроенные":         ["pompem", "webcheck"],
+}
+
+
 def is_tool_available(tool_name: str) -> bool:
-    """Проверяет доступность утилит через shutil.which или наличие встроенных модулей."""
-    if tool_name in ["pompem", "webcheck"]:
-        return True # Эти модули встроены в ядро
+    """True если инструмент установлен или является встроенным модулем."""
+    if tool_name in ("pompem", "webcheck"):
+        return True  # встроены в ядро M.A.R.S.
     return shutil.which(tool_name) is not None
 
+
 def check_tools(tools: tuple[str, ...] | None = None) -> dict[str, bool]:
-    """
-    Проверяет доступность утилит. Используется в Streamlit.
-    """
+    """Проверяет доступность инструментов. Используется в Streamlit UI."""
     names = tools if tools is not None else DEFAULT_REQUIRED_TOOLS
     return {name: is_tool_available(name) for name in names}
 
+
+def check_core_tools() -> dict[str, bool]:
+    """Проверяет только обязательные инструменты ядра."""
+    return {name: is_tool_available(name) for name in CORE_TOOLS}
+
+
 def all_tools_ready(status: dict[str, bool]) -> bool:
-    """True, если все утилиты из статуса доступны."""
     return all(status.values())
 
+
 def missing_tools(status: dict[str, bool]) -> list[str]:
-    """Список отсутствующих утилит."""
     return [name for name, ok in status.items() if not ok]
 
+
+def core_tools_ready() -> bool:
+    """True если все обязательные инструменты присутствуют."""
+    return all(is_tool_available(t) for t in CORE_TOOLS)
+
+
 def _wait_for_tool_install(tool_name: str) -> None:
-    """
-    Блокирует выполнение, пока пользователь не установит утилиту
-    и не подтвердит это нажатием Enter.
-    """
     package = _APT_PACKAGES.get(tool_name, tool_name)
     while True:
         print(
             f"\nУтилита [{tool_name}] не найдена. "
-            f"Пожалуйста, установите ее вручную "
-            f"(например: sudo apt install {package})"
+            f"Установите: sudo apt install {package}"
         )
         input("Нажмите Enter после установки...")
         if is_tool_available(tool_name):
-            print(f"[OK] Утилита [{tool_name}] обнаружена.\n")
+            print(f"[OK] {tool_name} обнаружен.\n")
             return
 
-def ensure_tools_available(
-    tools: Iterable[str] | None = None,
-) -> list[str]:
-    """
-    Гарантирует наличие всех перечисленных утилит.
-    При отсутствии — пауза и повторная проверка (без падения скрипта).
 
-    :param tools: список имён.
-    :return: список утилит, успешно найденных в PATH.
-    """
-    required = list(tools) if tools is not None else list(DEFAULT_REQUIRED_TOOLS)
+def ensure_tools_available(tools: Iterable[str] | None = None) -> list[str]:
+    """Гарантирует наличие инструментов, ожидает установки при отсутствии."""
+    required  = list(tools) if tools is not None else list(CORE_TOOLS)
     available: list[str] = []
-
     for tool in required:
         if is_tool_available(tool):
             available.append(tool)
         else:
             _wait_for_tool_install(tool)
             available.append(tool)
-
     return available

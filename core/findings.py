@@ -15,7 +15,7 @@ SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4, "u
 
 @dataclass
 class UnifiedFinding:
-    """Нормализованная находка (преимущественно CVE)."""
+    """Нормализованная находка (CVE + misc уязвимости)."""
 
     id: str
     severity: str = "unknown"
@@ -26,6 +26,13 @@ class UnifiedFinding:
     sources: list[str] = field(default_factory=list)
     nvd_verified: bool = False
     evidence: str = ""
+    # EPSS — вероятность эксплуатации в ближайшие 30 дней (0.0–1.0)
+    epss_score: float | None = None
+    epss_percentile: float | None = None
+    # Дополнительный контекст от сканеров
+    tool: str = ""         # какой сканер нашёл (sqlmap, testssl, dalfox, …)
+    url: str = ""          # конкретный URL/endpoint
+    parameter: str = ""    # уязвимый параметр (для SQLi, XSS)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

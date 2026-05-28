@@ -260,6 +260,254 @@ async def run_ffuf_async(target: str, timeout: int = 300) -> ScanResult:
     return await _run_command_async("ffuf", command, timeout=timeout)
 
 
+# ─── NEW TOOLS v2 ─────────────────────────────────────────────────────────────
+
+async def run_rustscan_async(
+    target: str,
+    timeout: int = 120,
+) -> ScanResult:
+    """
+    RustScan: обнаружение открытых портов за секунды, затем передача в nmap -sV.
+    В 100× быстрее чистого nmap на discovery-фазе.
+    """
+    host = extract_host(target)
+    command = [
+        "rustscan",
+        "-a", host,
+        "--ulimit", "5000",
+        "-b", "2500",
+        "--timeout", "3000",
+        "--",          # всё что дальше — передаётся в nmap
+        "-sV",
+        "--script", "default,vuln",
+    ]
+    return await _run_command_async("rustscan", command, timeout=timeout)
+
+
+async def run_naabu_async(
+    target: str,
+    timeout: int = 120,
+) -> ScanResult:
+    """naabu (ProjectDiscovery): быстрый порт-скан, хорошо работает в связке с httpx."""
+    host = extract_host(target)
+    command = [
+        "naabu",
+        "-host", host,
+        "-silent",
+        "-json",
+        "-top-ports", "1000",
+    ]
+    return await _run_command_async("naabu", command, timeout=timeout)
+
+
+async def run_httpx_async(
+    targets: list[str] | str,
+    timeout: int = 120,
+) -> ScanResult:
+    """
+    httpx (ProjectDiscovery): быстрая проверка HTTP-сервисов.
+    Принимает список субдоменов/хостов — возвращает живые с заголовками.
+    """
+    import tempfile
+    import os as _os
+
+    if isinstance(targets, str):
+        targets = [targets]
+
+    # Записываем список в tmp файл
+    tmp = tempfile.NamedTemporaryFile(
+        mode="w", suffix=".txt", delete=False, encoding="utf-8"
+    )
+    tmp.write("\n".join(targets))
+    tmp.close()
+
+    command = [
+        "httpx",
+        "-l", tmp.name,
+        "-title",
+        "-status-code",
+        "-tech-detect",
+        "-content-length",
+        "-follow-redirects",
+        "-silent",
+        "-json",
+    ]
+    result = await _run_command_async("httpx", command, timeout=timeout)
+    try:
+        _os.unlink(tmp.name)
+    except OSError:
+        pass
+    return result
+
+
+async def run_gau_async(target: str, timeout: int = 120) -> ScanResult:
+    """
+    gau (GetAllUrls): URL из Wayback Machine, CommonCrawl, OTX, URLscan.
+    Находит старые API эндпоинты, backup файлы, забытые пути.
+    """
+    host = extract_host(target)
+    command = [
+        "gau",
+        "--threads", "5",
+        "--subs",           # включать субдомены
+        "--blacklist", "png,jpg,gif,svg,woff,woff2,ttf,ico,css",
+        host,
+    ]
+    return await _run_command_async("gau", command, timeout=timeout)
+
+
+async def run_sqlmap_async(
+    target: str,
+    timeout: int = 600,
+    forms: bool = True,
+) -> ScanResult:
+    """
+    sqlmap: автоматическое обнаружение и анализ SQL-инъекций.
+    Режим: только обнаружение (--technique=B,E,U,S,T), без извлечения данных.
+    """
+    url = build_url(target)
+    command = [
+        "sqlmap",
+        "-u", url,
+        "--batch",              # без интерактива
+        "--level=2",            # глубина проверок (1-5)
+        "--risk=1",             # безопасность (1-3, 1=безопасный)
+        "--technique=BEUST",    # Boolean, Error, Union, Stacked, Time-based
+        "--random-agent",
+        "--output-dir=/tmp/sqlmap_mars",
+        "--answers=quit=N,crack=N",  # не пытаться взламывать хеши
+    ]
+    if forms:
+        command.extend(["--forms", "--crawl=2"])
+    return await _run_command_async("sqlmap", command, timeout=timeout)
+
+
+async def run_testssl_async(target: str, timeout: int = 300) -> ScanResult:
+    """
+    testssl.sh: полный TLS/SSL аудит.
+    Проверяет: протоколы, шифры, Heartbleed, POODLE, BEAST, CRIME, HSTS, cert expiry.
+    """
+    host = extract_host(target)
+    # Определяем порт
+    port = "443"
+    if ":443" in target or target.startswith("https://"):
+        port = "443"
+    elif ":8443" in target:
+        port = "8443"
+
+    command = [
+        "testssl",
+        "--severity",  "MEDIUM",
+        "--quiet",
+        "--warnings",  "off",
+        "--color",     "0",
+        "--jsonfile",  "/tmp/testssl_mars.json",
+        f"{host}:{port}",
+    ]
+    return await _run_command_async("testssl", command, timeout=timeout)
+
+
+async def run_dalfox_async(target: str, timeout: int = 300) -> ScanResult:
+    """
+    dalfox: современный XSS-сканер с DOM XSS поддержкой.
+    Лучше xsstrike: активно поддерживается, pipeline mode, BXSS.
+    """
+    url = build_url(target)
+    command = [
+        "dalfox",
+        "url", url,
+        "--silence",
+        "--no-color",
+        "--format", "json",
+        "--deep-domxss",
+        "--follow-redirects",
+        "--timeout", "10",
+    ]
+    return await _run_command_async("dalfox", command, timeout=timeout)
+
+
+async def run_feroxbuster_async(target: str, timeout: int = 600) -> ScanResult:
+    """
+    feroxbuster: рекурсивный брутфорс директорий.
+    Быстрее dirb, поддерживает рекурсию, умную фильтрацию.
+    """
+    url = build_url(target)
+
+    import os as _os
+    # Предпочтительный wordlist — SecLists, fallback на dirb
+    wordlists = [
+        "/usr/share/seclists/Discovery/Web-Content/raft-medium-directories.txt",
+        "/usr/share/seclists/Discovery/Web-Content/common.txt",
+        "/usr/share/dirb/wordlists/common.txt",
+    ]
+    wordlist = next((w for w in wordlists if _os.path.exists(w)), wordlists[-1])
+
+    command = [
+        "feroxbuster",
+        "--url", url,
+        "--depth", "3",
+        "--wordlist", wordlist,
+        "--filter-status", "404",
+        "--silent",
+        "--json",
+        "--output", "/tmp/ferox_mars.json",
+        "--threads", "50",
+    ]
+    return await _run_command_async("feroxbuster", command, timeout=timeout)
+
+
+async def run_theharvester_async(target: str, timeout: int = 180) -> ScanResult:
+    """
+    theHarvester: OSINT — email-адреса, субдомены, сотрудники через Google/Bing/LinkedIn.
+    """
+    host = extract_host(target)
+    command = [
+        "theHarvester",
+        "-d", host,
+        "-b", "google,bing,yahoo,duckduckgo,sublist3r,anubis",
+        "-l", "200",          # лимит результатов
+        "-f", "/tmp/harvester_mars",
+    ]
+    return await _run_command_async("theHarvester", command, timeout=timeout)
+
+
+async def run_trufflehog_async(target: str, timeout: int = 300) -> ScanResult:
+    """
+    trufflehog: поиск утёкших секретов (API ключи, пароли, токены) в git-репозиториях.
+    Особенно полезно если цель имеет публичный GitHub.
+    """
+    host = extract_host(target)
+    # Если это github.com URL — сканируем как git
+    if "github.com" in host:
+        scan_url = build_url(target)
+        command = ["trufflehog", "git", scan_url, "--only-verified", "--json"]
+    else:
+        # Попытка найти репо по организации
+        command = [
+            "trufflehog", "github",
+            "--org", host.split(".")[0],
+            "--only-verified",
+            "--json",
+        ]
+    return await _run_command_async("trufflehog", command, timeout=timeout)
+
+
+async def run_arjun_async(target: str, timeout: int = 300) -> ScanResult:
+    """
+    arjun: обнаружение скрытых HTTP-параметров.
+    Находит GET/POST параметры, которые не видны в коде, но обрабатываются сервером.
+    """
+    url = build_url(target)
+    command = [
+        "arjun",
+        "-u", url,
+        "--stable",
+        "-oJ", "/tmp/arjun_mars.json",
+        "-q",
+    ]
+    return await _run_command_async("arjun", command, timeout=timeout)
+
+
 async def run_xsstrike_async(target: str, timeout: int = 600, xsstrike_path: str = "xsstrike") -> ScanResult:
     """XSStrike: расширенный поиск XSS."""
     url = build_url(target)
@@ -277,13 +525,20 @@ async def run_light_scans(
     source_ip: str | None = None,
     http_proxy: str | None = None,
 ) -> ScanBundle:
-    """Лёгкий профиль: только nmap и whatweb параллельно."""
+    """
+    Лёгкий профиль: nmap/rustscan + whatweb параллельно.
+    Если rustscan доступен — использует его вместо nmap (быстрее).
+    """
+    import shutil as _shutil
     bundle = ScanBundle(target=target)
-    nmap_r, whatweb_r = await asyncio.gather(
-        run_nmap_async(target, interface=network_interface, source_ip=source_ip),
-        run_whatweb_async(target, proxy=http_proxy),
-    )
-    bundle.results.extend([nmap_r, whatweb_r])
+
+    if _shutil.which("rustscan"):
+        port_scan = run_rustscan_async(target)
+    else:
+        port_scan = run_nmap_async(target, interface=network_interface, source_ip=source_ip)
+
+    port_r, whatweb_r = await asyncio.gather(port_scan, run_whatweb_async(target, proxy=http_proxy))
+    bundle.results.extend([port_r, whatweb_r])
     return bundle
 
 
@@ -296,68 +551,96 @@ async def run_smart_scans(
     xsstrike_path: str = "xsstrike",
 ) -> ScanBundle:
     """
-    Умный режим: фаза 1 nmap+whatweb+subfinder, затем веб-сканеры по контексту.
+    Умный режим v2: адаптивный выбор инструментов по контексту цели.
+
+    Фаза 1 (параллельно): порт-скан + whatweb + subfinder + theHarvester + gau
+    Фаза 2 (по контексту): web-сканеры выбираются по результатам фазы 1
     """
+    import shutil as _shutil
     from core.scanner_selector import build_scanner_plan
 
     bundle = ScanBundle(target=target)
 
-    nmap_r, whatweb_r, subfinder_r = await asyncio.gather(
-        run_nmap_async(target, interface=network_interface, source_ip=source_ip),
+    # ── Фаза 1: разведка ──────────────────────────────────────────────────────
+    port_scan_coro = (
+        run_rustscan_async(target)
+        if _shutil.which("rustscan")
+        else run_nmap_async(target, interface=network_interface, source_ip=source_ip)
+    )
+
+    recon_coros: list[Any] = [
+        port_scan_coro,
         run_whatweb_async(target, proxy=http_proxy),
         run_subfinder_async(target),
-    )
-    bundle.results.extend([nmap_r, whatweb_r, subfinder_r])
+    ]
+    if _shutil.which("theHarvester"):
+        recon_coros.append(run_theharvester_async(target))
+    if _shutil.which("gau"):
+        recon_coros.append(run_gau_async(target))
 
-    plan = build_scanner_plan(nmap_r.stdout, whatweb_r.stdout)
+    recon_results = await asyncio.gather(*recon_coros)
+    port_r, whatweb_r, subfinder_r = recon_results[0], recon_results[1], recon_results[2]
+    bundle.results.extend([port_r, whatweb_r, subfinder_r])
+    for extra_r in recon_results[3:]:
+        bundle.results.append(extra_r)
+
+    # ── Строим план фазы 2 ────────────────────────────────────────────────────
+    plan = build_scanner_plan(port_r.stdout, whatweb_r.stdout)
     bundle.scanner_plan = {
-        "tools": plan.all_tools(),
-        "web": plan.web,
+        "tools":   plan.all_tools(),
+        "web":     plan.web,
         "reasons": plan.reasons,
     }
 
     if not plan.web:
-        url = build_url(target)
-        bundle.waf = run_waf_check(url)
+        bundle.waf = run_waf_check(build_url(target))
         return bundle
 
-    tasks: list[Any] = []
-    tool_names: list[str] = []
-    if "nuclei" in plan.web:
-        tasks.append(run_nuclei_scan_async(target))
-        tool_names.append("nuclei")
-    if "wpscan" in plan.web:
-        tasks.append(run_wpscan_async(target, api_key=wpscan_api_key))
-        tool_names.append("wpscan")
-    if "nikto" in plan.web:
-        tasks.append(run_nikto_async(target))
-        tool_names.append("nikto")
-    if "xsstrike" in plan.web:
-        tasks.append(run_xsstrike_async(target, xsstrike_path=xsstrike_path))
-        tool_names.append("xsstrike")
+    # ── Фаза 2A: параллельные веб-сканеры ─────────────────────────────────────
+    phase2a_tasks: list[Any] = []
+    phase2a_names: list[str] = []
 
-    results = await asyncio.gather(*tasks) if tasks else []
+    def _add(name: str, coro: Any) -> None:
+        phase2a_tasks.append(coro)
+        phase2a_names.append(name)
 
-    idx = 0
-    for name in tool_names:
+    if "nuclei"      in plan.web: _add("nuclei",       run_nuclei_scan_async(target))
+    if "nikto"       in plan.web: _add("nikto",        run_nikto_async(target))
+    if "testssl"     in plan.web: _add("testssl",      run_testssl_async(target))
+    if "dalfox"      in plan.web: _add("dalfox",       run_dalfox_async(target))
+    if "sqlmap"      in plan.web: _add("sqlmap",       run_sqlmap_async(target))
+    if "arjun"       in plan.web: _add("arjun",        run_arjun_async(target))
+    if "wpscan"      in plan.web: _add("wpscan",       run_wpscan_async(target, api_key=wpscan_api_key))
+    if "xsstrike"    in plan.web: _add("xsstrike",     run_xsstrike_async(target, xsstrike_path=xsstrike_path))
+    if "trufflehog"  in plan.web: _add("trufflehog",  run_trufflehog_async(target))
+
+    phase2a_results = await asyncio.gather(*phase2a_tasks) if phase2a_tasks else []
+    for name, res in zip(phase2a_names, phase2a_results):
         if name == "nuclei":
-            bundle.nuclei = results[idx]
-            idx += 1
+            bundle.nuclei = res
         else:
-            bundle.results.append(results[idx])
-            idx += 1
+            bundle.results.append(res)
 
-    if "ffuf" in plan.web or "dirb" in plan.web:
-        phase2 = []
-        if "ffuf" in plan.web:
-            phase2.append(run_ffuf_async(target))
-        if "dirb" in plan.web:
-            phase2.append(run_dirb_async(target))
-        extra = await asyncio.gather(*phase2)
+    # ── Фаза 2B: dir brute (медленнее, запускаем последними) ─────────────────
+    phase2b: list[Any] = []
+    if "feroxbuster" in plan.web and _shutil.which("feroxbuster"):
+        phase2b.append(run_feroxbuster_async(target))
+    elif "ffuf" in plan.web:
+        phase2b.append(run_ffuf_async(target))
+    if "dirb" in plan.web and not phase2b:
+        phase2b.append(run_dirb_async(target))
+
+    # httpx для субдоменов из subfinder
+    if subfinder_r.success and subfinder_r.stdout.strip() and _shutil.which("httpx"):
+        subdomains = [s.strip() for s in subfinder_r.stdout.splitlines() if s.strip()]
+        if subdomains:
+            phase2b.append(run_httpx_async(subdomains[:50]))  # лимит 50
+
+    if phase2b:
+        extra = await asyncio.gather(*phase2b)
         bundle.results.extend(extra)
 
-    url = build_url(target)
-    bundle.waf = run_waf_check(url)
+    bundle.waf = run_waf_check(build_url(target))
     return bundle
 
 
@@ -370,32 +653,65 @@ async def run_parallel_scans(
     xsstrike_path: str = "xsstrike",
 ) -> ScanBundle:
     """
-    Параллельно запускает все сканеры.
+    Полный параллельный запуск ВСЕХ сканеров (USE_SMART_SCANNERS=false).
+    Использует rustscan вместо nmap если доступен.
     """
+    import shutil as _shutil
     bundle = ScanBundle(target=target)
 
-    nmap_r, whatweb_r, nuclei_r, subfinder_r, wpscan_r, nikto_r, xsstrike_r = await asyncio.gather(
-        run_nmap_async(target, interface=network_interface, source_ip=source_ip),
+    port_scan = (
+        run_rustscan_async(target)
+        if _shutil.which("rustscan")
+        else run_nmap_async(target, interface=network_interface, source_ip=source_ip)
+    )
+
+    # Запускаем всё параллельно — кроме dir-brute (тяжёлые, во второй волне)
+    wave1 = await asyncio.gather(
+        port_scan,
         run_whatweb_async(target, proxy=http_proxy),
         run_nuclei_scan_async(target),
         run_subfinder_async(target),
         run_wpscan_async(target, api_key=wpscan_api_key),
         run_nikto_async(target),
-        run_xsstrike_async(target, xsstrike_path=xsstrike_path),
+        run_testssl_async(target),
+        run_dalfox_async(target),
+        run_sqlmap_async(target),
+        run_gau_async(target),
+        run_theharvester_async(target) if _shutil.which("theHarvester") else asyncio.sleep(0),
+        run_trufflehog_async(target)   if _shutil.which("trufflehog")   else asyncio.sleep(0),
+        run_arjun_async(target)        if _shutil.which("arjun")        else asyncio.sleep(0),
     )
 
-    bundle.results.extend([nmap_r, whatweb_r, subfinder_r, wpscan_r, nikto_r, xsstrike_r])  # type: ignore
+    port_r, whatweb_r, nuclei_r, subfinder_r, wpscan_r, nikto_r, testssl_r, \
+        dalfox_r, sqlmap_r, gau_r, *optional_r = wave1
+
     bundle.nuclei = nuclei_r  # type: ignore
+    for r in [port_r, whatweb_r, subfinder_r, wpscan_r, nikto_r,
+              testssl_r, dalfox_r, sqlmap_r, gau_r]:
+        if isinstance(r, ScanResult):
+            bundle.results.append(r)
+    for r in optional_r:
+        if isinstance(r, ScanResult):
+            bundle.results.append(r)
 
-    print("[*] WAF detection (WebCheck logic)...")
-    url = build_url(target)
-    bundle.waf = run_waf_check(url)
+    bundle.waf = run_waf_check(build_url(target))
 
-    print("[*] ffuf (быстрый fuzzing, параллельно с dirb)...")
-    ffuf_result, dirb_result = await asyncio.gather(
-        run_ffuf_async(target),
-        run_dirb_async(target),
-    )
-    bundle.results.extend([ffuf_result, dirb_result])
+    # Вторая волна: dir brute + httpx для субдоменов
+    wave2_coros: list[Any] = []
+    if _shutil.which("feroxbuster"):
+        wave2_coros.append(run_feroxbuster_async(target))
+    else:
+        wave2_coros.extend([run_ffuf_async(target), run_dirb_async(target)])
+
+    if subfinder_r.success and subfinder_r.stdout.strip() and _shutil.which("httpx"):
+        subs = [s.strip() for s in subfinder_r.stdout.splitlines() if s.strip()][:50]
+        if subs:
+            wave2_coros.append(run_httpx_async(subs))
+
+    if wave2_coros:
+        wave2 = await asyncio.gather(*wave2_coros)
+        for r in wave2:
+            if isinstance(r, ScanResult):
+                bundle.results.append(r)
 
     return bundle

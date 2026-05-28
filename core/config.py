@@ -44,6 +44,9 @@ class Settings:
     xsstrike_path: str = "xsstrike"
     enable_red_team: bool = False
     allow_exploit_execution: bool = False
+    # Новые интеграции v2
+    greynoise_api_key: str | None = None
+    nvd_api_key: str | None = None
 
 
 def _fail(message: str) -> None:
@@ -141,6 +144,8 @@ def load_settings(env_path: str | None = None) -> Settings:
         xsstrike_path=os.getenv("XSSTRIKE_PATH", "xsstrike"),
         enable_red_team=parse_bool_env("ENABLE_RED_TEAM", default=False),
         allow_exploit_execution=parse_bool_env("ALLOW_EXPLOIT_EXECUTION", default=False),
+        greynoise_api_key=os.getenv("GREYNOISE_API_KEY"),
+        nvd_api_key=os.getenv("NVD_API_KEY"),
     )
 
 
@@ -177,4 +182,6 @@ def try_load_settings(env_path: str | None = None) -> Settings:
         xsstrike_path=os.getenv("XSSTRIKE_PATH", "xsstrike"),
         enable_red_team=parse_bool_env("ENABLE_RED_TEAM", default=False),
         allow_exploit_execution=parse_bool_env("ALLOW_EXPLOIT_EXECUTION", default=False),
+        greynoise_api_key=os.getenv("GREYNOISE_API_KEY"),
+        nvd_api_key=os.getenv("NVD_API_KEY"),
     )

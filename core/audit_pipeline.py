@@ -25,6 +25,8 @@ from core.cancel_registry import (
     is_audit_cancelled,
 )
 from core.config import Settings
+from core.epss_client import enrich_findings_with_epss, get_epss_scores, prioritize_findings
+from core.greynoise_client import interpret_greynoise, run_greynoise_recon
 from core.light_analyzer import LightAnalyzer
 from core.log_truncator import truncate_for_ai
 from core.logger import get_logger
@@ -64,6 +66,7 @@ def build_final_report(
     shodan_res: dict[str, Any] | None = None,
     vt_res: dict[str, Any] | None = None,
     cve_diff: dict[str, Any] | None = None,
+    greynoise_res: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Итоговый JSON-отчёт."""
     nuclei_findings: list[dict[str, Any]] = []
@@ -96,9 +99,10 @@ def build_final_report(
         "nuclei_findings": nuclei_findings,
         "nvd_enrichment": nvd_records,
         "searchsploit": searchsploit_results,
-        "shodan": shodan_res or {},
-        "virustotal": vt_res or {},
-        "waf": bundle.waf,
+        "shodan":     shodan_res    or {},
+        "virustotal": vt_res        or {},
+        "greynoise":  greynoise_res or {},
+        "waf":        bundle.waf,
         "raw_scan_logs": bundle.to_log_text(),
         "ai_summary": ai_results.get("final_summary", ai_results.get("summary", "")),
         "parsed_data": ai_results.get("parsed_data", ""),
@@ -285,15 +289,38 @@ async def run_audit_async(
         nvd_records = _run_nvd(logs, nvd_key, progress)
         searchsploit_results = _run_searchsploit(bundle, target, progress)
 
-        shodan_res: dict[str, Any] = {}
-        vt_res: dict[str, Any] = {}
+        shodan_res:     dict[str, Any] = {}
+        vt_res:         dict[str, Any] = {}
+        greynoise_res:  dict[str, Any] = {}
         osint_data = ""
 
         if profile == AuditProfile.FULL:
             shodan_res, vt_res, osint_data = _run_osint(target, settings, progress)
-            subfinder_res = next((r for r in bundle.results if r.tool == "subfinder"), None)
-            if subfinder_res and subfinder_res.success:
-                osint_data += f"SUBFINDER:\n{subfinder_res.stdout}\n"
+
+            # ── GreyNoise ──────────────────────────────────────────────────
+            if settings.greynoise_api_key:
+                progress("OSINT: GreyNoise IP classification...")
+                ensure_not_cancelled()
+                try:
+                    import asyncio as _aio
+                    greynoise_res = _aio.get_event_loop().run_until_complete(
+                        run_greynoise_recon(target, settings.greynoise_api_key)
+                    )
+                    osint_data += (
+                        f"GREYNOISE:\n"
+                        f"{interpret_greynoise(greynoise_res)}\n"
+                        f"{json.dumps(greynoise_res, ensure_ascii=False)}\n\n"
+                    )
+                except Exception as exc:
+                    log.warning("GreyNoise ошибка: %s", exc)
+            else:
+                progress("OSINT: GreyNoise пропущен (нет GREYNOISE_API_KEY)")
+
+            # Дополнительные данные из новых сканеров
+            for tool_name in ("subfinder", "gau", "theHarvester", "httpx"):
+                tool_res = next((r for r in bundle.results if r.tool == tool_name), None)
+                if tool_res and tool_res.success and tool_res.stdout.strip():
+                    osint_data += f"{tool_name.upper()}:\n{tool_res.stdout[:3000]}\n\n"
             if bundle.waf:
                 osint_data += f"WAF:\n{json.dumps(bundle.waf, ensure_ascii=False)}\n"
 
@@ -304,33 +331,59 @@ async def run_audit_async(
         else:
             ai_results = _run_ai_swarm(logs, osint_data, mode, progress, step_callback)
 
+        # ── EPSS scoring ───────────────────────────────────────────────────────
+        progress("EPSS: приоритизация CVE по вероятности эксплуатации...")
+        ensure_not_cancelled()
+        all_cve_ids = list({
+            r.get("id", "")
+            for r in nvd_records
+            if str(r.get("id", "")).startswith("CVE-")
+        })
+        epss_scores: dict[str, Any] = {}
+        if all_cve_ids:
+            try:
+                import asyncio as _aio
+                epss_scores = _aio.get_event_loop().run_until_complete(
+                    get_epss_scores(all_cve_ids)
+                )
+                log.info("EPSS: получено %d scores для %d CVE", len(epss_scores), len(all_cve_ids))
+            except Exception as exc:
+                log.warning("EPSS ошибка: %s", exc)
+
         prev = find_previous_report(target)
         cve_diff = None
         if prev:
             progress("Сравнение с предыдущим аудитом...")
             draft = build_final_report(
-                target,
-                bundle,
-                ai_results,
+                target, bundle, ai_results,
                 profile=profile,
                 nvd_records=nvd_records,
                 searchsploit_results=searchsploit_results,
                 shodan_res=shodan_res,
                 vt_res=vt_res,
+                greynoise_res=greynoise_res,
             )
             cve_diff = diff_cve_reports(prev, draft)
 
         report = build_final_report(
-            target,
-            bundle,
-            ai_results,
+            target, bundle, ai_results,
             profile=profile,
             nvd_records=nvd_records,
             searchsploit_results=searchsploit_results,
             shodan_res=shodan_res,
             vt_res=vt_res,
             cve_diff=cve_diff,
+            greynoise_res=greynoise_res,
         )
+
+        # ── Обогащаем unified_findings данными EPSS ────────────────────────────
+        if epss_scores and report.get("unified_findings"):
+            report["unified_findings"] = enrich_findings_with_epss(
+                report["unified_findings"], epss_scores
+            )
+            report["unified_findings"] = prioritize_findings(report["unified_findings"])
+            log.info("EPSS: %d findings приоритизировано", len(report["unified_findings"]))
+        report["epss_scores"] = epss_scores
         mark_completed("Аудит завершён", report_ready=True)
         log.info("Аудит завершён: target=%s profile=%s", target, profile.value)
         return report
