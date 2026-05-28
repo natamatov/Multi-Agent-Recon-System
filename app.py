@@ -325,7 +325,7 @@ def _progress_fragment() -> None:
         tail = LOG_FILE.read_text(encoding="utf-8", errors="replace").splitlines()[-20:]
         with st.expander("📋 Журнал выполнения", expanded=True):
             st.markdown(
-                f'<div class="log-box">' + "\n".join(tail) + "</div>",
+                '<div class="log-box">' + "\n".join(tail) + "</div>",
                 unsafe_allow_html=True,
             )
 
@@ -1091,7 +1091,7 @@ def _render_sidebar(settings) -> tuple[AuditProfile, AuditMode, bool, bool]:
         running = _is_audit_running()
         if running:
             st.markdown(
-                f'<span class="pill pill-running">⚙️ Running</span>',
+                '<span class="pill pill-running">⚙️ Running</span>',
                 unsafe_allow_html=True,
             )
             st.caption(f"`{state.target}`")
@@ -1175,7 +1175,31 @@ def _render_sidebar(settings) -> tuple[AuditProfile, AuditMode, bool, bool]:
         else:
             prov  = getattr(settings, "llm_provider", "?")
             model = getattr(settings, "llm_model", "?")
-            st.success(f"✅ **{prov}**\n`{model}`")
+
+            # TCP connectivity check — кэшируем на сессию, timeout 2s
+            from core.llm_check import check_from_settings as _llm_chk
+            _cache_k = f"_llm_tcp_{prov}_{model}"
+            if _cache_k not in st.session_state:
+                st.session_state[_cache_k] = _llm_chk(settings, timeout=2.0)
+            _chk = st.session_state[_cache_k]
+
+            if _chk.ok:
+                st.success(f"✅ **{prov}**\n`{model}`")
+            else:
+                # Ключ есть, но endpoint недоступен — показываем предупреждение,
+                # запуск НЕ блокируем (graceful degradation в pipeline)
+                st.warning(
+                    f"⚠️ **{prov}** — нет связи\n"
+                    f"`{model}`\n"
+                    f"_{_chk.message}_"
+                )
+                st.caption("Сканирование продолжится, AI недоступен")
+
+            if st.button("🔁 Проверить LLM", key="chk_llm_btn",
+                         use_container_width=True, type="secondary"):
+                if _cache_k in st.session_state:
+                    del st.session_state[_cache_k]
+                st.rerun()
 
     return profile, audit_mode, scope_ok, llm_ready
 

@@ -28,10 +28,14 @@ from core.config import Settings
 from core.epss_client import enrich_findings_with_epss, get_epss_scores, prioritize_findings
 from core.greynoise_client import interpret_greynoise, run_greynoise_recon
 from core.integrations.notify import notify_audit_completed
-from core.mitre_mapper import attack_summary_markdown, build_attack_summary, enrich_findings_with_attack
-from core.light_analyzer import LightAnalyzer
+from core.light_analyzer import LightAnalyzer, _ai_unavailable_result, _diagnose_llm_error
 from core.log_truncator import truncate_for_ai
 from core.logger import get_logger
+from core.mitre_mapper import (
+    attack_summary_markdown,
+    build_attack_summary,
+    enrich_findings_with_attack,
+)
 from core.nvd_client import enrich_cves_from_text
 from core.rate_limiter import NVD_LIMITER, SHODAN_LIMITER, VT_LIMITER
 from core.report_store import (
@@ -207,6 +211,7 @@ def _run_ai_light(
 
     model_str = f"{provider}/{model}"
 
+    # LightAnalyzer уже ловит ошибки внутри и возвращает частичный результат
     analyzer = LightAnalyzer(model=model_str, api_key=api_key, api_base=api_base)
     return analyzer.analyze(nmap_log, whatweb_log)
 
@@ -215,6 +220,7 @@ def _run_ai_swarm(
     logs: str,
     osint_data: str,
     mode: AuditMode,
+    settings: Settings,
     on_progress: ProgressCallback,
     step_callback: Callable[..., None] | None = None,
 ) -> dict[str, Any]:
@@ -225,10 +231,17 @@ def _run_ai_swarm(
         os.environ["ALLOW_EXPLOIT_EXECUTION"] = "true"
     else:
         os.environ["ALLOW_EXPLOIT_EXECUTION"] = "false"
-    from core.swarm.orchestrator import MARSSwarmManager
-
-    manager = MARSSwarmManager(step_callback=step_callback, mode=mode)
-    return manager.run_analysis(truncated, osint_data=osint_data)
+    try:
+        from core.swarm.orchestrator import MARSSwarmManager
+        manager = MARSSwarmManager(step_callback=step_callback, mode=mode)
+        return manager.run_analysis(truncated, osint_data=osint_data)
+    except Exception as exc:
+        provider = getattr(settings, "llm_provider", "anthropic").lower()
+        model_str = f"{provider}/{getattr(settings, 'llm_model', 'claude-3-5-sonnet-20241022')}"
+        api_key = getattr(settings, "llm_api_key", None) or getattr(settings, "claude_api_key", None)
+        hint = _diagnose_llm_error(exc, model_str, api_key, getattr(settings, "llm_api_base", None))
+        log.error("AI Swarm недоступен: %s | %s", exc, hint)
+        return _ai_unavailable_result(str(exc), hint, model_str)
 
 
 async def run_audit_async(
@@ -252,6 +265,21 @@ async def run_audit_async(
     try:
         progress("Подготовка...")
         ensure_not_cancelled()
+
+        # ── Pre-flight LLM check (предупреждение, не блокирует сканирование) ───
+        try:
+            from core.llm_check import check_from_settings as _llm_chk
+            _chk = _llm_chk(settings, timeout=3.0)
+            if _chk.ok:
+                log.info("LLM pre-flight: %s", _chk.message)
+            else:
+                log.warning("LLM pre-flight: %s | %s", _chk.message, _chk.hint)
+                progress(
+                    f"⚠️ LLM недоступен: {_chk.message} — "
+                    "сканирование продолжается, AI-анализ деградирует gracefully"
+                )
+        except Exception as _e:
+            log.debug("LLM pre-flight пропущен: %s", _e)
 
         if profile == AuditProfile.LIGHT:
             progress("Сканирование: nmap + whatweb...")
@@ -328,7 +356,7 @@ async def run_audit_async(
         if profile == AuditProfile.LIGHT:
             ai_results = _run_ai_light(bundle, settings, progress)
         else:
-            ai_results = _run_ai_swarm(logs, osint_data, mode, progress, step_callback)
+            ai_results = _run_ai_swarm(logs, osint_data, mode, settings, progress, step_callback)
 
         # ── EPSS scoring ───────────────────────────────────────────────────────
         progress("EPSS: приоритизация CVE по вероятности эксплуатации...")

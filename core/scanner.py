@@ -308,8 +308,8 @@ async def run_httpx_async(
     httpx (ProjectDiscovery): быстрая проверка HTTP-сервисов.
     Принимает список субдоменов/хостов — возвращает живые с заголовками.
     """
-    import tempfile
     import os as _os
+    import tempfile
 
     if isinstance(targets, str):
         targets = [targets]
@@ -639,7 +639,7 @@ async def run_hydra_async(
     service: ssh, ftp, smb, rdp, http-form-post
     """
     import os as _os
-    if not _os.getenv("ENABLE_RED_TEAM", "").lower() in ("1", "true", "yes"):
+    if _os.getenv("ENABLE_RED_TEAM", "").lower() not in ("1", "true", "yes"):
         return ScanResult(
             tool="hydra",
             command=[],
@@ -705,6 +705,7 @@ async def run_smart_scans(
     Фаза 2 (по контексту): web-сканеры выбираются по результатам фазы 1
     """
     import shutil as _shutil
+
     from core.scanner_selector import build_scanner_plan
 
     bundle = ScanBundle(target=target)
@@ -754,18 +755,30 @@ async def run_smart_scans(
         phase2a_tasks.append(coro)
         phase2a_names.append(name)
 
-    if "nuclei"      in plan.web: _add("nuclei",       run_nuclei_scan_async(target))
-    if "nikto"       in plan.web: _add("nikto",        run_nikto_async(target))
-    if "testssl"     in plan.web: _add("testssl",      run_testssl_async(target))
-    if "dalfox"      in plan.web: _add("dalfox",       run_dalfox_async(target))
-    if "sqlmap"      in plan.web: _add("sqlmap",       run_sqlmap_async(target))
-    if "arjun"       in plan.web: _add("arjun",        run_arjun_async(target))
-    if "wpscan"      in plan.web: _add("wpscan",       run_wpscan_async(target, api_key=wpscan_api_key))
-    if "xsstrike"    in plan.web: _add("xsstrike",     run_xsstrike_async(target, xsstrike_path=xsstrike_path))
-    if "trufflehog"  in plan.web: _add("trufflehog",  run_trufflehog_async(target))
-    if "semgrep"     in plan.web: _add("semgrep",     run_semgrep_async(target))
-    if "kiterunner"  in plan.web: _add("kiterunner",  run_kiterunner_async(target))
-    if "cewl"        in plan.web: _add("cewl",         run_cewl_async(target))
+    if "nuclei"     in plan.web:
+        _add("nuclei",      run_nuclei_scan_async(target))
+    if "nikto"      in plan.web:
+        _add("nikto",       run_nikto_async(target))
+    if "testssl"    in plan.web:
+        _add("testssl",     run_testssl_async(target))
+    if "dalfox"     in plan.web:
+        _add("dalfox",      run_dalfox_async(target))
+    if "sqlmap"     in plan.web:
+        _add("sqlmap",      run_sqlmap_async(target))
+    if "arjun"      in plan.web:
+        _add("arjun",       run_arjun_async(target))
+    if "wpscan"     in plan.web:
+        _add("wpscan",      run_wpscan_async(target, api_key=wpscan_api_key))
+    if "xsstrike"   in plan.web:
+        _add("xsstrike",    run_xsstrike_async(target, xsstrike_path=xsstrike_path))
+    if "trufflehog" in plan.web:
+        _add("trufflehog",  run_trufflehog_async(target))
+    if "semgrep"    in plan.web:
+        _add("semgrep",     run_semgrep_async(target))
+    if "kiterunner" in plan.web:
+        _add("kiterunner",  run_kiterunner_async(target))
+    if "cewl"       in plan.web:
+        _add("cewl",        run_cewl_async(target))
 
     phase2a_results = await asyncio.gather(*phase2a_tasks) if phase2a_tasks else []
     for name, res in zip(phase2a_names, phase2a_results):
